@@ -1,0 +1,58 @@
+{
+  "name": "container-manager-frontend",
+  "version": "1.0.0",
+  "description": "Frontend Dashboard for SaaS Container Manager - Multi-tenant Docker management interface",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@headlessui/react": "^1.7.17",
+    "@heroicons/react": "^2.0.18",
+    "@tailwindcss/forms": "^0.5.10",
+    "@tailwindcss/typography": "^0.5.19",
+    "autoprefixer": "^10.4.16",
+    "axios": "^1.6.2",
+    "clsx": "^2.0.0",
+    "date-fns": "^2.30.0",
+    "js-cookie": "^3.0.5",
+    "next": "^14.0.4",
+    "postcss": "^8.4.32",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hook-form": "^7.48.2",
+    "react-hot-toast": "^2.4.1",
+    "react-query": "^3.39.3",
+    "react-syntax-highlighter": "^15.5.0",
+    "recharts": "^2.8.0",
+    "socket.io-client": "^4.7.4",
+    "tailwindcss": "^3.3.6"
+  },
+  "devDependencies": {
+    "@types/js-cookie": "^3.0.6",
+    "@types/node": "^20.10.5",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@types/react-syntax-highlighter": "^15.5.11",
+    "@typescript-eslint/eslint-plugin": "^6.16.0",
+    "@typescript-eslint/parser": "^6.16.0",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "^14.0.4",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "nextjs",
+    "react",
+    "typescript",
+    "docker",
+    "dashboard",
+    "saas"
+  ],
+  "author": "Your Team",
+  "license": "MIT"
+}

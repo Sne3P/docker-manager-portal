@@ -1,0 +1,138 @@
+name: Infrastructure Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform Action'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+        - plan
+        - apply
+        - destroy
+      
+      ssh_public_key:
+        description: 'SSH Public Key for VM access'
+        required: true
+        type: string
+
+env:
+  TF_VERSION: '1.6.0'
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    name: Terraform Infrastructure Management
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Terraform Init
+      working-directory: infra
+      run: terraform init
+
+    - name: Terraform Validate
+      working-directory: infra
+      run: terraform validate
+
+    - name: Terraform Plan
+      if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'apply'
+      working-directory: infra
+      run: |
+        terraform plan \
+          -var="ssh_public_key=${{ github.event.inputs.ssh_public_key }}" \
+          -out=tfplan
+      env:
+        TF_VAR_ssh_public_key: ${{ github.event.inputs.ssh_public_key }}
+
+    - name: Terraform Apply
+      if: github.event.inputs.action == 'apply'
+      working-directory: infra
+      run: terraform apply -auto-approve tfplan
+
+    - name: Terraform Destroy Plan
+      if: github.event.inputs.action == 'destroy'
+      working-directory: infra
+      run: |
+        terraform plan -destroy \
+          -var="ssh_public_key=${{ github.event.inputs.ssh_public_key }}" \
+          -out=tfplan-destroy
+
+    - name: Terraform Destroy
+      if: github.event.inputs.action == 'destroy'
+      working-directory: infra
+      run: terraform apply -auto-approve tfplan-destroy
+
+    - name: Get Terraform Outputs
+      if: github.event.inputs.action == 'apply'
+      working-directory: infra
+      run: |
+        echo "=== Terraform Outputs ===" >> $GITHUB_STEP_SUMMARY
+        terraform output -json > outputs.json
+        
+        # Extract important outputs
+        VM_IP=$(terraform output -raw vm_public_ip)
+        ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
+        RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+        VM_NAME=$(terraform output -raw vm_name)
+        
+        echo "## 🚀 Infrastructure Deployed Successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Access Information" >> $GITHUB_STEP_SUMMARY
+        echo "- **VM Public IP**: $VM_IP" >> $GITHUB_STEP_SUMMARY
+        echo "- **SSH Command**: \`ssh azureuser@$VM_IP\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Dashboard URL**: http://$VM_IP:3000" >> $GITHUB_STEP_SUMMARY
+        echo "- **API URL**: http://$VM_IP:5000" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔧 Azure Resources" >> $GITHUB_STEP_SUMMARY
+        echo "- **Resource Group**: $RESOURCE_GROUP" >> $GITHUB_STEP_SUMMARY
+        echo "- **VM Name**: $VM_NAME" >> $GITHUB_STEP_SUMMARY
+        echo "- **Container Registry**: $ACR_LOGIN_SERVER" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Update repository secrets with the values above" >> $GITHUB_STEP_SUMMARY
+        echo "2. Run the main CI/CD pipeline to deploy applications" >> $GITHUB_STEP_SUMMARY
+        echo "3. SSH into the VM to verify the setup" >> $GITHUB_STEP_SUMMARY
+        
+        # Save outputs as artifacts for later use
+        echo "VM_IP=$VM_IP" >> infrastructure-info.txt
+        echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> infrastructure-info.txt
+        echo "RESOURCE_GROUP=$RESOURCE_GROUP" >> infrastructure-info.txt
+        echo "VM_NAME=$VM_NAME" >> infrastructure-info.txt
+
+    - name: Upload Infrastructure Info
+      if: github.event.inputs.action == 'apply'
+      uses: actions/upload-artifact@v3
+      with:
+        name: infrastructure-info
+        path: infra/infrastructure-info.txt
+
+    - name: Update Repository Secrets (Placeholder)
+      if: github.event.inputs.action == 'apply'
+      run: |
+        echo "⚠️ Manual Action Required:"
+        echo "Update the following GitHub repository secrets with the values from the outputs:"
+        echo "- ACR_LOGIN_SERVER"
+        echo "- ACR_USERNAME (from Key Vault or Terraform outputs)"
+        echo "- ACR_PASSWORD (from Key Vault or Terraform outputs)"
+        echo "- AZURE_RESOURCE_GROUP"
+        echo "- AZURE_VM_NAME"
+        echo "- SSH_PRIVATE_KEY (corresponding to the public key used)"
+        echo "- VM_USERNAME (default: azureuser)"

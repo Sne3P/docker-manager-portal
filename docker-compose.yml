@@ -1,0 +1,134 @@
+# Docker Compose for Container Manager Platform - Development Environment
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./dashboard-backend
+      dockerfile: Dockerfile
+    container_name: container-manager-backend
+    privileged: true
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - JWT_SECRET=dev-secret-change-in-production
+      - JWT_EXPIRES_IN=24h
+      - DOCKER_SOCKET_PATH=/var/run/docker.sock
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - FRONTEND_URL=http://localhost:3000
+      - NGINX_URL=http://localhost
+      - LOG_LEVEL=debug
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+      - ./dashboard-backend/logs:/app/logs
+      - ./dashboard-backend/src:/app/src:ro
+    networks:
+      - container-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "service.name=container-manager-backend"
+      - "service.type=api"
+      - "environment=development"
+
+  # Frontend Dashboard
+  frontend:
+    build:
+      context: ./dashboard-frontend
+      dockerfile: Dockerfile
+    container_name: container-manager-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:5000/api
+      - NEXT_PUBLIC_SOCKET_URL=http://localhost:5000
+      - NEXT_PUBLIC_APP_NAME=Container Manager
+      - NEXT_PUBLIC_ENABLE_REAL_TIME=true
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - container-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "service.name=container-manager-frontend"
+      - "service.type=web"
+      - "environment=development"
+
+
+
+  # Redis (for session storage and caching)
+  redis:
+    image: redis:7-alpine
+    container_name: container-manager-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - container-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "service.name=redis"
+      - "service.type=database"
+
+  # Nginx (Reverse proxy and load balancer)
+  nginx:
+    image: nginx:alpine
+    container_name: container-manager-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx:/etc/nginx/conf.d:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - container-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "service.name=nginx"
+      - "service.type=proxy"
+
+networks:
+  container-manager-network:
+    driver: bridge
+    name: container-manager-network
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  redis-data:
+    name: container-manager-redis-data
+    driver: local
+
+# Development helpers
+x-common-variables: &common-variables
+  COMPOSE_PROJECT_NAME: container-manager-dev
+  COMPOSE_FILE: docker-compose.yml

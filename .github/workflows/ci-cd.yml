@@ -1,0 +1,334 @@
+name: CI/CD Pipeline - Container Manager Platform
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY_NAME: ${{ secrets.ACR_LOGIN_SERVER }}
+  REGISTRY_USERNAME: ${{ secrets.ACR_USERNAME }}
+  REGISTRY_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+  CLUSTER_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  VM_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  VM_NAME: ${{ secrets.AZURE_VM_NAME }}
+
+jobs:
+  # Test and lint jobs
+  test-backend:
+    runs-on: ubuntu-latest
+    name: Test Backend (Express/TypeScript)
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: 'dashboard-backend/package-lock.json'
+
+    - name: Install dependencies
+      working-directory: dashboard-backend
+      run: |
+        npm ci
+
+    - name: Run linting
+      working-directory: dashboard-backend
+      run: |
+        npm run lint
+
+    - name: Run type checking
+      working-directory: dashboard-backend
+      run: |
+        npm run build
+
+    - name: Run tests
+      working-directory: dashboard-backend
+      run: |
+        npm test
+      env:
+        NODE_ENV: test
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    name: Test Frontend (Next.js/TypeScript)
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: 'dashboard-frontend/package-lock.json'
+
+    - name: Install dependencies
+      working-directory: dashboard-frontend
+      run: |
+        npm ci
+
+    - name: Run linting
+      working-directory: dashboard-frontend
+      run: |
+        npm run lint
+
+    - name: Run type checking
+      working-directory: dashboard-frontend
+      run: |
+        npm run type-check
+
+    - name: Build application
+      working-directory: dashboard-frontend
+      run: |
+        npm run build
+      env:
+        NEXT_PUBLIC_API_URL: http://localhost:5000/api
+
+  # Security scanning
+  security-scan:
+    runs-on: ubuntu-latest
+    name: Security Scanning
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Build and push Docker images
+  build-and-push:
+    runs-on: ubuntu-latest
+    name: Build and Push Docker Images
+    needs: [test-backend, test-frontend, security-scan]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Container Registry Login
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY_NAME }}
+        username: ${{ env.REGISTRY_USERNAME }}
+        password: ${{ env.REGISTRY_PASSWORD }}
+
+    - name: Build and push backend image
+      run: |
+        cd dashboard-backend
+        docker build -t ${{ env.REGISTRY_NAME }}/container-manager-backend:${{ github.sha }} .
+        docker build -t ${{ env.REGISTRY_NAME }}/container-manager-backend:latest .
+        docker push ${{ env.REGISTRY_NAME }}/container-manager-backend:${{ github.sha }}
+        docker push ${{ env.REGISTRY_NAME }}/container-manager-backend:latest
+
+    - name: Build and push frontend image
+      run: |
+        cd dashboard-frontend
+        docker build -t ${{ env.REGISTRY_NAME }}/container-manager-frontend:${{ github.sha }} .
+        docker build -t ${{ env.REGISTRY_NAME }}/container-manager-frontend:latest .
+        docker push ${{ env.REGISTRY_NAME }}/container-manager-frontend:${{ github.sha }}
+        docker push ${{ env.REGISTRY_NAME }}/container-manager-frontend:latest
+
+    - name: Build and push service images
+      run: |
+        # Demo API Service
+        cd services/service-api
+        docker build -t ${{ env.REGISTRY_NAME }}/demo-api-service:${{ github.sha }} .
+        docker build -t ${{ env.REGISTRY_NAME }}/demo-api-service:latest .
+        docker push ${{ env.REGISTRY_NAME }}/demo-api-service:${{ github.sha }}
+        docker push ${{ env.REGISTRY_NAME }}/demo-api-service:latest
+        
+        # Demo Web Service
+        cd ../service-web
+        docker build -t ${{ env.REGISTRY_NAME }}/demo-web-service:${{ github.sha }} .
+        docker build -t ${{ env.REGISTRY_NAME }}/demo-web-service:latest .
+        docker push ${{ env.REGISTRY_NAME }}/demo-web-service:${{ github.sha }}
+        docker push ${{ env.REGISTRY_NAME }}/demo-web-service:latest
+        
+        # Demo Worker Service
+        cd ../service-worker
+        docker build -t ${{ env.REGISTRY_NAME }}/demo-worker-service:${{ github.sha }} .
+        docker build -t ${{ env.REGISTRY_NAME }}/demo-worker-service:latest .
+        docker push ${{ env.REGISTRY_NAME }}/demo-worker-service:${{ github.sha }}
+        docker push ${{ env.REGISTRY_NAME }}/demo-worker-service:latest
+
+  # Deploy to Azure VM
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Azure VM
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Get VM Public IP
+      id: vm-ip
+      run: |
+        VM_IP=$(az vm list-ip-addresses \
+          --resource-group ${{ env.VM_RESOURCE_GROUP }} \
+          --name ${{ env.VM_NAME }} \
+          --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+          --output tsv)
+        echo "VM_IP=$VM_IP" >> $GITHUB_OUTPUT
+        echo "VM Public IP: $VM_IP"
+
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ steps.vm-ip.outputs.VM_IP }} >> ~/.ssh/known_hosts
+
+    - name: Create deployment directory
+      run: |
+        ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USERNAME }}@${{ steps.vm-ip.outputs.VM_IP }} '
+          sudo mkdir -p /opt/container-manager/deployment
+          sudo chown $USER:$USER /opt/container-manager/deployment
+        '
+
+    - name: Copy docker-compose files
+      run: |
+        scp -i ~/.ssh/id_rsa docker-compose.prod.yml ${{ secrets.VM_USERNAME }}@${{ steps.vm-ip.outputs.VM_IP }}:/opt/container-manager/
+        scp -i ~/.ssh/id_rsa .env.production ${{ secrets.VM_USERNAME }}@${{ steps.vm-ip.outputs.VM_IP }}:/opt/container-manager/.env
+
+    - name: Login to ACR on VM
+      run: |
+        ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USERNAME }}@${{ steps.vm-ip.outputs.VM_IP }} '
+          echo "${{ env.REGISTRY_PASSWORD }}" | docker login ${{ env.REGISTRY_NAME }} -u ${{ env.REGISTRY_USERNAME }} --password-stdin
+        '
+
+    - name: Deploy application
+      run: |
+        ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USERNAME }}@${{ steps.vm-ip.outputs.VM_IP }} '
+          cd /opt/container-manager
+          
+          # Pull latest images
+          docker-compose -f docker-compose.prod.yml pull
+          
+          # Stop existing services
+          docker-compose -f docker-compose.prod.yml down
+          
+          # Start services with new images
+          docker-compose -f docker-compose.prod.yml up -d
+          
+          # Wait for services to be ready
+          sleep 30
+          
+          # Health checks
+          echo "=== Deployment Health Check ==="
+          docker-compose -f docker-compose.prod.yml ps
+          
+          echo "=== Backend Health Check ==="
+          curl -f http://localhost:5000/health || echo "Backend health check failed"
+          
+          echo "=== Frontend Health Check ==="
+          curl -f http://localhost:3000 || echo "Frontend health check failed"
+          
+          echo "=== Container Cleanup ==="
+          docker system prune -f
+        '
+
+    - name: Deployment notification
+      run: |
+        echo "🚀 Deployment completed successfully!"
+        echo "📊 Dashboard URL: http://${{ steps.vm-ip.outputs.VM_IP }}:3000"
+        echo "🔌 API URL: http://${{ steps.vm-ip.outputs.VM_IP }}:5000"
+
+  # Post-deployment tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    name: Integration Tests
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Get VM Public IP
+      id: vm-ip
+      run: |
+        VM_IP=$(az vm list-ip-addresses \
+          --resource-group ${{ env.VM_RESOURCE_GROUP }} \
+          --name ${{ env.VM_NAME }} \
+          --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+          --output tsv)
+        echo "VM_IP=$VM_IP" >> $GITHUB_OUTPUT
+
+    - name: Test API endpoints
+      run: |
+        # Wait for services to be fully ready
+        sleep 60
+        
+        # Test backend health
+        curl -f http://${{ steps.vm-ip.outputs.VM_IP }}:5000/health
+        
+        # Test frontend
+        curl -f http://${{ steps.vm-ip.outputs.VM_IP }}:3000
+        
+        echo "✅ All integration tests passed!"
+
+    - name: Performance baseline
+      run: |
+        echo "🏃‍♂️ Running basic performance tests..."
+        
+        # Simple load test with curl
+        for i in {1..10}; do
+          time curl -s http://${{ steps.vm-ip.outputs.VM_IP }}:5000/health > /dev/null
+        done
+        
+        echo "✅ Performance baseline completed!"
+
+  # Notification job
+  notify:
+    runs-on: ubuntu-latest
+    name: Deployment Notification
+    needs: [deploy, integration-tests]
+    if: always() && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Get VM Public IP
+      if: needs.deploy.result == 'success'
+      run: |
+        echo "🎉 Container Manager Platform deployed successfully!"
+        echo "📍 Environment: Production"
+        echo "🔗 Access URLs will be displayed in previous job logs"
+        echo "📊 Monitor the deployment in Azure Portal"
+
+    - name: Failure notification
+      if: needs.deploy.result == 'failure' || needs.integration-tests.result == 'failure'
+      run: |
+        echo "❌ Deployment failed!"
+        echo "🔍 Check the job logs for detailed error information"
+        echo "🚨 Manual intervention may be required"

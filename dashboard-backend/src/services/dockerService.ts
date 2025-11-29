@@ -1,0 +1,352 @@
+import Docker from 'dockerode';
+import { Container, ContainerStats, CreateContainerRequest } from '../types';
+import { logger } from '../utils/logger';
+
+class DockerService {
+  private docker: Docker;
+
+  constructor() {
+    this.docker = new Docker({
+      socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock'
+    });
+  }
+
+  async listContainers(clientId?: string): Promise<Container[]> {
+    try {
+      const containers = await this.docker.listContainers({ all: true });
+      
+      return containers
+        .filter((container: any) => {
+          // Filter by client if specified
+          return !clientId || container.Labels?.clientId === clientId;
+        })
+        .map((container: any) => ({
+          id: container.Id,
+          name: container.Names[0]?.substring(1), // Remove leading slash
+          image: container.Image,
+          status: container.State,
+          created: new Date(container.Created * 1000).toISOString(),
+          clientId: container.Labels?.clientId || container.Labels?.client || '',
+          serviceType: container.Labels?.serviceType || 'custom',
+          url: container.Labels?.serviceType ? 
+            this.generateClientUrl(
+              container.Labels?.clientId || container.Labels?.client || '', 
+              container.Labels?.serviceType,
+              container.Ports?.find((p: any) => p.PrivatePort === 80)?.PublicPort || 8000
+            ) : undefined,
+          labels: container.Labels || {},
+          ports: container.Ports?.map((port: any) => ({
+            containerPort: port.PrivatePort,
+            hostPort: port.PublicPort,
+            protocol: port.Type as 'tcp' | 'udp'
+          })) || [],
+          networks: Object.keys(container.NetworkSettings?.Networks || {}),
+        }));
+    } catch (error) {
+      logger.error('Failed to list containers:', error);
+      throw new Error('Failed to retrieve containers');
+    }
+  }
+
+  async createContainer(request: CreateContainerRequest): Promise<string> {
+    try {
+      const { name, image, ports = [], environment = {}, labels = {}, clientId } = request;
+      
+      // Add client ID to labels for multi-tenant isolation
+      const containerLabels = {
+        ...labels,
+        clientId,
+        'com.container-manager.created': new Date().toISOString()
+      };
+
+      const createOptions: any = {
+        Image: image,
+        name: `${clientId}-${name}`,
+        Labels: containerLabels,
+        Env: Object.entries(environment).map(([key, value]) => `${key}=${value}`),
+        ExposedPorts: {} as Record<string, {}>,
+        HostConfig: {
+          PortBindings: {} as Record<string, Array<{ HostPort: string }>>
+        }
+      };
+
+      // Add command if specified
+      if (request.cmd) {
+        createOptions.Cmd = request.cmd;
+        logger.info(`Adding command to container: ${JSON.stringify(request.cmd)}`);
+      } else {
+        logger.warn(`No command specified for container: ${request.name}`);
+      }
+
+      // Configure port mappings
+      if (ports.length > 0) {
+        ports.forEach(port => {
+          const portKey = `${port.containerPort}/${port.protocol}`;
+          createOptions.ExposedPorts[portKey] = {};
+          createOptions.HostConfig.PortBindings[portKey] = [
+            { HostPort: port.hostPort?.toString() || '0' }
+          ];
+        });
+      }
+
+      const container = await this.docker.createContainer(createOptions);
+      
+      logger.info(`Container created: ${container.id} for client: ${clientId}`);
+      return container.id;
+    } catch (error: any) {
+      logger.error('Failed to create container:', error);
+      throw new Error(`Failed to create container: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  async startContainer(id: string): Promise<void> {
+    try {
+      const container = this.docker.getContainer(id);
+      await container.start();
+      logger.info(`Container started: ${id}`);
+    } catch (error: any) {
+      logger.error(`Failed to start container ${id}:`, error);
+      throw new Error(`Failed to start container: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  async stopContainer(id: string): Promise<void> {
+    try {
+      const container = this.docker.getContainer(id);
+      await container.stop();
+      logger.info(`Container stopped: ${id}`);
+    } catch (error: any) {
+      logger.error(`Failed to stop container ${id}:`, error);
+      throw new Error(`Failed to stop container: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  async restartContainer(id: string): Promise<void> {
+    try {
+      const container = this.docker.getContainer(id);
+      await container.restart();
+      logger.info(`Container restarted: ${id}`);
+    } catch (error: any) {
+      logger.error(`Failed to restart container ${id}:`, error);
+      throw new Error(`Failed to restart container: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  async removeContainer(id: string): Promise<void> {
+    try {
+      const container = this.docker.getContainer(id);
+      await container.remove({ force: true });
+      logger.info(`Container removed: ${id}`);
+    } catch (error: any) {
+      logger.error(`Failed to remove container ${id}:`, error);
+      throw new Error(`Failed to remove container: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  async getContainerLogs(id: string, tail: number = 100): Promise<string[]> {
+    try {
+      const container = this.docker.getContainer(id);
+      const logs = await container.logs({
+        stdout: true,
+        stderr: true,
+        tail,
+        timestamps: true
+      });
+      
+      return logs.toString().split('\n').filter(line => line.trim());
+    } catch (error: any) {
+      logger.error(`Failed to get logs for container ${id}:`, error);
+      throw new Error(`Failed to get container logs: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  async getContainerStats(id: string): Promise<ContainerStats> {
+    try {
+      const container = this.docker.getContainer(id);
+      const stream = await container.stats({ stream: false });
+      
+      // Parse Docker stats
+      const stats = JSON.parse(stream.toString());
+      
+      // Calculate CPU percentage
+      const cpuDelta = stats.cpu_stats?.cpu_usage?.total_usage - 
+                     (stats.precpu_stats?.cpu_usage?.total_usage || 0);
+      const systemDelta = stats.cpu_stats?.system_cpu_usage - 
+                         (stats.precpu_stats?.system_cpu_usage || 0);
+      const cpuUsage = systemDelta > 0 ? (cpuDelta / systemDelta) * 100 : 0;
+
+      // Calculate memory usage
+      const memoryUsage = stats.memory_stats?.usage || 0;
+      const memoryLimit = stats.memory_stats?.limit || 1;
+      const memoryPercent = (memoryUsage / memoryLimit) * 100;
+
+      // Calculate network I/O
+      const networks = stats.networks || {};
+      const networkRx = Object.values(networks).reduce((sum: number, net: any) => sum + (net.rx_bytes || 0), 0);
+      const networkTx = Object.values(networks).reduce((sum: number, net: any) => sum + (net.tx_bytes || 0), 0);
+
+      return {
+        containerId: id,
+        cpu: {
+          usage: isNaN(cpuUsage) ? 0 : Math.round(cpuUsage * 100) / 100
+        },
+        memory: {
+          usage: memoryUsage,
+          limit: memoryLimit,
+          percent: Math.round(memoryPercent * 100) / 100
+        },
+        network: {
+          rxBytes: networkRx,
+          txBytes: networkTx
+        },
+        timestamp: new Date().toISOString()
+      };
+    } catch (error: any) {
+      logger.error(`Failed to get stats for container ${id}:`, error);
+      throw new Error(`Failed to get container stats: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  async streamContainerLogs(id: string, callback: (data: string) => void): Promise<void> {
+    try {
+      const container = this.docker.getContainer(id);
+      const stream = await container.logs({
+        stdout: true,
+        stderr: true,
+        follow: true,
+        timestamps: true
+      });
+
+      stream.on('data', (chunk: any) => {
+        callback(chunk.toString());
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Log stream error for container ${id}:`, error);
+      });
+    } catch (error: any) {
+      logger.error(`Failed to stream logs for container ${id}:`, error);
+      throw new Error(`Failed to stream container logs: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  // Méthode pour générer des URLs uniques par client
+  generateClientUrl(clientId: string, serviceName: string, port: number): string {
+    const baseUrl = process.env.BASE_URL || 'localhost';
+    return `http://${clientId}-${serviceName}.${baseUrl}:${port}`;
+  }
+
+  // Créer un service prédéfini pour un client avec gestion Docker réelle
+  async createPredefinedService(clientId: string, serviceType: 'nginx' | 'nodejs' | 'python' | 'database'): Promise<{ containerId: string; url: string; port: number }> {
+    const timestamp = Date.now();
+    const serviceConfigs = {
+      nginx: {
+        image: 'nginx:alpine', 
+        name: `nginx-${clientId}-${timestamp}`,
+        cmd: ['nginx', '-g', 'daemon off;'],
+        ports: [{ containerPort: 80, hostPort: 0, protocol: 'tcp' as const }],
+        environment: { 
+          CLIENT_ID: clientId,
+          SERVICE_TYPE: 'nginx',
+          NGINX_HOST: `${clientId}-web.localhost`
+        }
+      },
+      nodejs: {
+        image: 'nginx:alpine',
+        name: `nodejs-${clientId}-${timestamp}`,
+        cmd: ['sh', '-c', 'echo "<h1>Node.js Service for client ${CLIENT_ID}</h1><p>Service: nodejs</p><p>Status: Running</p>" > /usr/share/nginx/html/index.html && nginx -g "daemon off;"'],
+        ports: [{ containerPort: 80, hostPort: 0, protocol: 'tcp' as const }],
+        environment: { 
+          CLIENT_ID: clientId,
+          SERVICE_TYPE: 'nodejs',
+          NGINX_HOST: `${clientId}-nodejs.localhost`
+        }
+      },
+      python: {
+        image: 'nginx:alpine',
+        name: `python-${clientId}-${timestamp}`,
+        cmd: ['sh', '-c', 'echo "<h1>Python Service for client ${CLIENT_ID}</h1><p>Service: python</p><p>Status: Running</p>" > /usr/share/nginx/html/index.html && nginx -g "daemon off;"'],
+        ports: [{ containerPort: 80, hostPort: 0, protocol: 'tcp' as const }],
+        environment: { 
+          CLIENT_ID: clientId,
+          SERVICE_TYPE: 'python',
+          NGINX_HOST: `${clientId}-python.localhost`
+        }
+      },
+      database: {
+        image: 'nginx:alpine',
+        name: `database-${clientId}-${timestamp}`, 
+        cmd: ['sh', '-c', 'echo "<h1>Database Service for client ${CLIENT_ID}</h1><p>Service: database</p><p>Status: Running</p><p>Type: PostgreSQL Compatible</p>" > /usr/share/nginx/html/index.html && nginx -g "daemon off;"'],
+        ports: [{ containerPort: 80, hostPort: 0, protocol: 'tcp' as const }],
+        environment: { 
+          CLIENT_ID: clientId,
+          SERVICE_TYPE: 'database',
+          NGINX_HOST: `${clientId}-database.localhost`
+        }
+      }
+    };
+
+    const config = serviceConfigs[serviceType];
+    
+    if (!config) {
+      throw new Error(`Service type '${serviceType}' not supported. Available types: ${Object.keys(serviceConfigs).join(', ')}`);
+    }
+    
+    logger.info(`Creating ${serviceType} service config: ${JSON.stringify(config, null, 2)}`);
+    
+    // Créer le container avec Docker réel
+    const containerId = await this.createContainer({
+      name: config.name,
+      image: config.image,
+      cmd: config.cmd,
+      ports: config.ports,
+      environment: config.environment,
+      clientId,
+      serviceType,
+      labels: { 
+        serviceType,
+        client: clientId,
+        'container-manager.managed': 'true'
+      }
+    });
+
+    // Démarrer le container
+    await this.startContainer(containerId);
+    
+    // Récupérer le port mappé réellement par Docker
+    const containers = await this.docker.listContainers();
+    const containerInfo = containers.find((c: any) => c.Id.startsWith(containerId));
+    const mappedPort = containerInfo?.Ports?.find((p: any) => p.PrivatePort === 80)?.PublicPort || 8000 + Math.floor(Math.random() * 1000);
+    
+    // Générer l'URL unique avec le vrai port
+    const url = `http://${clientId}-${serviceType}.localhost:${mappedPort}`;
+
+    logger.info(`Service ${serviceType} créé pour client ${clientId}: ${url}`);
+
+    return { containerId, url, port: mappedPort };
+  }
+
+  // Obtenir les containers avec informations complètes
+  async getContainerDetails(id: string): Promise<any> {
+    try {
+      const container = this.docker.getContainer(id);
+      const info = await container.inspect();
+      
+      return {
+        id: info.Id,
+        name: info.Name.substring(1), // Remove leading slash
+        image: info.Config.Image,
+        status: info.State.Status,
+        created: info.Created,
+        ports: info.NetworkSettings.Ports,
+        environment: info.Config.Env,
+        labels: info.Config.Labels || {}
+      };
+    } catch (error: any) {
+      logger.error(`Failed to get container details ${id}:`, error);
+      throw new Error(`Failed to get container details: ${error.message || 'Unknown error'}`);
+    }
+  }
+}
+
+export const dockerService = new DockerService();

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container Manager - Demo Web Service</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 800px;
+            margin: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .logo {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .service-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .info-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-card h3 {
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .info-card p {
+            color: #555;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #22c55e;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .features {
+            margin-bottom: 40px;
+        }
+
+        .features h2 {
+            color: #333;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 8px;
+        }
+
+        .feature-icon {
+            font-size: 20px;
+        }
+
+        .footer {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+
+        .client-badge {
+            display: inline-block;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+            
+            .service-info {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🌐</div>
+            <h1>Demo Web Service</h1>
+            <p class="subtitle">Container Management Platform - Web Interface</p>
+        </div>
+
+        <div class="service-info">
+            <div class="info-card">
+                <h3>Service Status</h3>
+                <p class="status-indicator">
+                    <span class="status-dot"></span>
+                    Running
+                </p>
+            </div>
+            
+            <div class="info-card">
+                <h3>Client ID</h3>
+                <p id="clientId">Loading...</p>
+            </div>
+            
+            <div class="info-card">
+                <h3>Service Type</h3>
+                <p>Web Frontend</p>
+            </div>
+            
+            <div class="info-card">
+                <h3>Started At</h3>
+                <p id="startTime">Loading...</p>
+            </div>
+        </div>
+
+        <div class="features">
+            <h2>Service Features</h2>
+            <div class="feature-list">
+                <div class="feature-item">
+                    <span class="feature-icon">📱</span>
+                    <span>Responsive Design</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">🚀</span>
+                    <span>Fast Loading</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">🔒</span>
+                    <span>Secure</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">🎨</span>
+                    <span>Modern UI</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">📊</span>
+                    <span>Monitoring Ready</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">⚡</span>
+                    <span>High Performance</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div style="margin-bottom: 10px;">
+                <span class="client-badge" id="clientBadge">Client: Loading...</span>
+            </div>
+            <p>Powered by Container Manager Platform | Version 1.0.0</p>
+        </div>
+    </div>
+
+    <script>
+        // Get client ID from environment or URL
+        function getClientId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('client') || 'demo-client';
+        }
+
+        // Update client information
+        function updateClientInfo() {
+            const clientId = getClientId();
+            document.getElementById('clientId').textContent = clientId;
+            document.getElementById('clientBadge').textContent = `Client: ${clientId}`;
+            
+            // Update start time
+            const startTime = new Date().toLocaleString();
+            document.getElementById('startTime').textContent = startTime;
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            updateClientInfo();
+            
+            // Update timestamp every minute
+            setInterval(function() {
+                const now = new Date().toLocaleString();
+                const timeElement = document.getElementById('startTime');
+                if (timeElement) {
+                    timeElement.textContent = `Last updated: ${now}`;
+                }
+            }, 60000);
+        });
+
+        // Log page view for monitoring
+        console.log(`[${new Date().toISOString()}] Demo Web Service loaded for client: ${getClientId()}`);
+    </script>
+</body>
+</html>
