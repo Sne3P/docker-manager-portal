@@ -9,8 +9,8 @@ import dotenv from 'dotenv';
 // Import routes
 import authRoutes from './routes/auth';
 import containerRoutes from './routes/containers-prod';
-import healthRoutes from './routes/health';
 import adminRoutes from './routes/admin';
+import healthRoutes from './routes/health';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';

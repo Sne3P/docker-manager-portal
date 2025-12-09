@@ -1,6 +1,6 @@
-﻿# 🚀 Container Management Platform
+﻿# 🐳 Container Manager Pro
 
-Plateforme de gestion de conteneurs Docker multi-tenant avec interface web moderne.
+**Production-ready multi-tenant Docker management platform** with modern web interface.
 
 ## ⚡ Démarrage rapide
 
