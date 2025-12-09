@@ -61,7 +61,7 @@ export default function Login() {
               <div className="space-y-4">
                 <div>
                   <label htmlFor="email" className="block text-sm font-semibold text-black mb-2">
-                    Username
+                    Email
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -70,9 +70,9 @@ export default function Login() {
                     <input
                       id="email"
                       name="email"
-                      type="text"
+                      type="email"
                       required
-                      placeholder="admin, client1, client2"
+                      placeholder="admin@portail-cloud.com"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 placeholder-gray-400"
@@ -121,11 +121,12 @@ export default function Login() {
                   <span className="bg-white px-4 text-gray-500 font-medium">Quick Access</span>
                 </div>
               </div>
-              <div className="mt-6 grid grid-cols-3 gap-2">
+              <div className="mt-6 grid grid-cols-2 gap-2">
                 {[
-                  { username: 'admin', password: 'admin123', label: 'Admin', icon: Icons.Settings },
-                  { username: 'client1', password: 'client123', label: 'Client 1', icon: Icons.User },
-                  { username: 'client2', password: 'client123', label: 'Client 2', icon: Icons.User }
+                  { username: 'admin@portail-cloud.com', password: 'admin123', label: 'Admin', icon: Icons.Users },
+                  { username: 'client1@portail-cloud.com', password: 'client123', label: 'Client 1', icon: Icons.User },
+                  { username: 'client2@portail-cloud.com', password: 'client123', label: 'Client 2', icon: Icons.User },
+                  { username: 'client3@portail-cloud.com', password: 'client123', label: 'Client 3', icon: Icons.User }
                 ].map((user) => (
                   <Button
                     key={user.username}

@@ -13,9 +13,10 @@
 import express, { Response } from 'express';
 import { AuthRequest, authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
-import { dockerService } from '../services/dockerService';
+import ClientService from '../services/clientService';
 
 const router = express.Router();
+const clientService = new ClientService();
 
 // Apply authentication to all admin routes
 router.use(authenticate);
@@ -29,26 +30,36 @@ router.use(authorize(['admin']));
  */
 router.get('/clients', async (req: AuthRequest, res: Response) => {
   try {
-    // Get real clients from container data
-    const containers = await dockerService.listContainers();
+    // Récupérer tous les clients enrichis (BDD + Docker)
+    const enrichedClients = await clientService.getAllEnrichedClients();
     
-    // Extract unique client IDs from containers
-    const clientIds = [...new Set(containers.map((c: any) => c.clientId).filter((id: any) => id && id !== 'unknown'))];
+    // Filtrer les containers système
+    const systemContainerNames = [
+      'container-manager-backend', 
+      'container-manager-frontend', 
+      'container-manager-nginx', 
+      'container-manager-postgres'
+    ];
     
-    const clients = (clientIds as string[]).map((clientId: string) => {
-      const clientContainers = containers.filter((c: any) => c.clientId === clientId);
-      return {
-        id: clientId,
-        name: clientId.replace('-', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-        email: `${clientId}@example.com`,
-        createdAt: new Date().toISOString(),
-        isActive: true,
-        containerQuota: 10,
-        usedContainers: clientContainers.length
-      };
-    });
+    const clientContainers = enrichedClients.filter(client => 
+      !systemContainerNames.includes(client.name)
+    );
 
-    logger.info(`Admin ${req.user?.email} retrieved clients list`);
+    // Mapper vers le format attendu par le frontend
+    const clients = clientContainers.map(client => ({
+      id: client.name,
+      name: client.name.replace('-', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+      email: `${client.name}@example.com`,
+      createdAt: client.created_at.toISOString(),
+      isActive: client.status === 'active',
+      containerQuota: 10,
+      usedContainers: 1,
+      description: client.description,
+      dockerStatus: client.docker_status,
+      dockerImage: client.docker_image
+    }));
+
+    logger.info(`Admin ${req.user?.email} retrieved ${clients.length} clients`);
     
     res.json({
       success: true,
@@ -70,25 +81,36 @@ router.get('/clients', async (req: AuthRequest, res: Response) => {
  */
 router.get('/containers', async (req: AuthRequest, res: Response) => {
   try {
-    // Get real containers from Docker API
-    const containers = await dockerService.listContainers();
+    // Récupérer tous les containers enrichis
+    const enrichedContainers = await clientService.getAllEnrichedClients();
     
-    // Filter out management containers and format for admin view
-    const adminContainers = containers
-      .filter((container: any) => !container.name?.includes('container-manager'))
-      .map((container: any) => ({
-        id: container.id,
+    // Filtrer les containers système et mapper pour l'admin
+    const systemContainerNames = [
+      'container-manager-backend', 
+      'container-manager-frontend', 
+      'container-manager-nginx', 
+      'container-manager-postgres'
+    ];
+    
+    const adminContainers = enrichedContainers
+      .filter(container => !systemContainerNames.includes(container.name))
+      .map(container => ({
+        id: container.docker_container_id || container.id.toString(),
         name: container.name,
-        clientId: container.clientId || 'unknown',
-        serviceType: container.serviceType || 'custom',
-        status: container.status,
-        image: container.image,
-        ports: container.ports,
-        createdAt: container.created,
-        url: container.url
+        clientId: container.name,
+        serviceType: container.docker_image?.includes('nginx') ? 'nginx' : 
+                    container.docker_image?.includes('node') ? 'nodejs' : 'custom',
+        status: container.docker_status || container.status,
+        image: container.docker_image || 'unknown',
+        ports: container.docker_ports || [],
+        createdAt: container.docker_created || container.created_at,
+        url: container.docker_ports?.[0] ? 
+             `http://localhost:${container.docker_ports[0].public_port}` : null,
+        description: container.description,
+        networks: container.docker_networks
       }));
 
-    logger.info(`Admin ${req.user?.email} retrieved all containers`);
+    logger.info(`Admin ${req.user?.email} retrieved ${adminContainers.length} containers`);
     
     res.json({
       success: true,
@@ -173,21 +195,33 @@ router.post('/containers/:id/:action', async (req: AuthRequest, res: Response) =
       });
     }
 
-    // Perform the actual Docker action
+    // Perform the actual Docker action avec logging en BDD
     try {
+      const userId = (req.user as any)?.userId || 1;
+      let success = false;
+
       switch (action) {
         case 'start':
-          await dockerService.startContainer(id);
+          success = await clientService.startContainer(id, userId);
           break;
         case 'stop':
-          await dockerService.stopContainer(id);
+          success = await clientService.stopContainer(id, userId);
           break;
         case 'restart':
-          await dockerService.restartContainer(id);
+          // Pour restart, on fait stop puis start
+          await clientService.stopContainer(id, userId);
+          success = await clientService.startContainer(id, userId);
           break;
         case 'remove':
-          await dockerService.removeContainer(id);
+          success = await clientService.removeContainer(id, userId);
           break;
+      }
+
+      if (!success) {
+        return res.status(500).json({
+          success: false,
+          message: `Failed to ${action} container`
+        });
       }
     } catch (dockerError: any) {
       logger.error(`Docker ${action} failed for container ${id}:`, dockerError);

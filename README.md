@@ -10,8 +10,8 @@
 
 ## 🔐 Connexion
 
-- **Admin**: `admin` / `admin123`
-- **Client**: `client1` / `client123`
+- **Admin**: `admin@portail-cloud.com` / `admin123`
+- **User**: `user@portail-cloud.com` / `user123`
 
 ## 🌐 Accès
 
@@ -20,8 +20,9 @@
 
 ## 🏗️ Architecture
 
-- **Backend**: Node.js + TypeScript + JWT
-- **Frontend**: Next.js + React
+- **Backend**: Node.js + TypeScript + JWT + PostgreSQL
+- **Frontend**: Next.js + React + Tailwind CSS
+- **Database**: PostgreSQL 15 (persistant)
 - **Proxy**: Nginx
 - **Docker**: Alpine images optimisées
 
@@ -120,7 +121,7 @@ az group delete --name rg-container-complete --yes --no-wait
 
 ### Core Functionality
 - **Multi-tenant Architecture**: Isolated container management per client
-- **Role-Based Access Control**: Admin and client user roles
+- **Role-Based Access Control**: Admin and client roles
 - **Real-time Container Operations**: Create, start, stop, delete containers
 - **Container Monitoring**: Live status, logs, and resource usage
 - **Security-First Design**: JWT authentication, input validation

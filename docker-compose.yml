@@ -1,5 +1,27 @@
-# Container Management Platform - Optimized for Fast Development
+# Container Management Platform - Optimized with PostgreSQL Database
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: container-manager-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-portail_cloud_db}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - container-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Backend API
   backend:
     build:
@@ -17,11 +39,15 @@ services:
       - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
       - JWT_EXPIRES_IN=24h
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/${POSTGRES_DB:-portail_cloud_db}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:rw
     networks:
       - container-manager-network
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/api/health"]
       interval: 30s
@@ -45,6 +71,8 @@ services:
       - NEXT_PUBLIC_APP_NAME=Container Manager
     depends_on:
       backend:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     networks:
       - container-manager-network
@@ -85,4 +113,5 @@ networks:
   container-manager-network:
     driver: bridge
 
-# No volumes needed
+volumes:
+  postgres_data:

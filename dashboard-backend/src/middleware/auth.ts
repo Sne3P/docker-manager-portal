@@ -12,42 +12,9 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { User } from '../types';
 import { logger } from '../utils/logger';
+import AuthService from '../services/authService';
 
-/**
- * Mock user credentials for development and testing
- * 
- * In production environment, replace with:
- * - Encrypted password storage (bcrypt)
- * - Database-backed user management
- * - OAuth2/SAML integration
- * 
- * Current roles:
- * - admin: Full system access, all container operations
- * - client: Limited access to own containers only
- */
-const USERS = {
-  'admin': {
-    id: 'admin-1',
-    password: 'admin123',
-    role: 'admin',
-    name: 'System Administrator',
-    clientId: null
-  },
-  'client1': {
-    id: 'client-1', 
-    password: 'client123',
-    role: 'client',
-    name: 'Client One',
-    clientId: 'client-1'
-  },
-  'client2': {
-    id: 'client-2',
-    password: 'client123', 
-    role: 'client',
-    name: 'Client Two',
-    clientId: 'client-2'
-  }
-} as const;
+// Authentication now handled by PostgreSQL database via AuthService
 
 /**
  * Extended Express Request interface with user authentication data
@@ -158,8 +125,4 @@ export const authorize = (roles: Array<User['role']>) => {
   };
 };
 
-export const findUserByEmail = (email: string) => USERS[email as keyof typeof USERS];
-export const validateCredentials = (email: string, password: string) => {
-  const user = USERS[email as keyof typeof USERS];
-  return user && user.password === password ? user : null;
-};
+// User validation now handled by AuthService with PostgreSQL
