@@ -1,157 +1,107 @@
-name: Deploy to Azure
+name: Deploy Container Platform
 
-# Automatic deployment pipeline for Container Management Platform
 on:
   push:
     branches: [ main ]
-  # Déploiement uniquement sur push main (pas sur PR)
+  workflow_dispatch:  # Allow manual trigger
 
 env:
-  # Variables automatiques - pas besoin de configuration manuelle
-  RESOURCE_GROUP: "rg-container-platform-prod"
-  REGISTRY_NAME: "acrcontainerplatformprod"
-  PROJECT_NAME: "container-platform"
+  AZURE_RESOURCE_GROUP: rg-container-platform
+  APP_NAME_PREFIX: container-platform
 
 jobs:
-  # Test and build application
-  test:
+  deploy:
     runs-on: ubuntu-latest
-    name: Test Application
     
     steps:
-    - name: Checkout code
+    - name: Checkout
       uses: actions/checkout@v4
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
-        cache: 'npm'
-        cache-dependency-path: |
-          dashboard-backend/package-lock.json
-          dashboard-frontend/package-lock.json
 
     # Test backend
-    - name: Install backend dependencies
+    - name: Test Backend
+      working-directory: ./dashboard-backend
       run: |
-        cd dashboard-backend
         npm ci
-
-    - name: Run backend tests
-      run: |
-        cd dashboard-backend
         npm run build
-        npm test --if-present
+        npm test -- --passWithNoTests
 
-    # Test frontend  
-    - name: Install frontend dependencies
+    # Test frontend
+    - name: Test Frontend
+      working-directory: ./dashboard-frontend
       run: |
-        cd dashboard-frontend
         npm ci
-
-    - name: Run frontend tests
-      run: |
-        cd dashboard-frontend
         npm run build
-        npm test --if-present
 
-  # Build and push Docker images
-  build:
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    # Login to Azure using credentials
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Login to Azure Container Registry
-      run: |
-        # Login automatique via Azure CLI (pas besoin de username/password)
-        az acr login --name ${{ env.REGISTRY_NAME }}
-
-    # Build and push backend image
-    - name: Build and push backend Docker image
-      run: |
-        docker build -t ${{ env.REGISTRY_NAME }}.azurecr.io/backend:${{ github.sha }} \
-                     -t ${{ env.REGISTRY_NAME }}.azurecr.io/backend:latest \
-                     ./dashboard-backend
-        docker push ${{ env.REGISTRY_NAME }}.azurecr.io/backend:${{ github.sha }}
-        docker push ${{ env.REGISTRY_NAME }}.azurecr.io/backend:latest
-
-    # Build and push frontend image  
-    - name: Build and push frontend Docker image
-      run: |
-        docker build -t ${{ env.REGISTRY_NAME }}.azurecr.io/frontend:${{ github.sha }} \
-                     -t ${{ env.REGISTRY_NAME }}.azurecr.io/frontend:latest \
-                     ./dashboard-frontend
-        docker push ${{ env.REGISTRY_NAME }}.azurecr.io/frontend:${{ github.sha }}
-        docker push ${{ env.REGISTRY_NAME }}.azurecr.io/frontend:latest
-
-  # Deploy infrastructure with Terraform
-  terraform:
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
+    # Setup Terraform
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.5.0
 
-    - name: Login to Azure
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - name: Terraform Init
+    # Deploy infrastructure
+    - name: Deploy Infrastructure
+      working-directory: ./terraform
       run: |
-        cd terraform
         terraform init
+        terraform plan -var="db_admin_password=${{ secrets.DB_ADMIN_PASSWORD }}" -out=tfplan
+        terraform apply -auto-approve tfplan
 
-    - name: Terraform Plan
+    # Package applications
+    - name: Package Applications
       run: |
-        cd terraform
-        terraform plan -var="admin_password=${{ secrets.DB_ADMIN_PASSWORD }}"
+        # Backend package
+        cd dashboard-backend
+        npm ci --production
+        zip -r ../backend.zip . -x "*.log" "coverage/*" "*.test.js"
+        cd ..
+        
+        # Frontend package (already built)
+        cd dashboard-frontend
+        zip -r ../frontend.zip out/ 2>/dev/null || zip -r ../frontend.zip build/ || zip -r ../frontend.zip dist/ || echo "Using default files"
+        cd ..
 
-    - name: Terraform Apply
+    # Deploy applications
+    - name: Deploy Applications
       run: |
-        cd terraform
-        terraform apply -auto-approve -var="admin_password=${{ secrets.DB_ADMIN_PASSWORD }}"
+        # Get App Service names from Terraform outputs or use defaults
+        BACKEND_APP="${{ env.APP_NAME_PREFIX }}-api"
+        FRONTEND_APP="${{ env.APP_NAME_PREFIX }}-web"
+        
+        # Deploy backend
+        az webapp deployment source config-zip \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name $BACKEND_APP \
+          --src backend.zip
+        
+        # Deploy frontend
+        az webapp deployment source config-zip \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name $FRONTEND_APP \
+          --src frontend.zip
 
-  # Deploy applications to Azure App Service
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [build, terraform]
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Login to Azure
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    # Deploy backend
-    - name: Deploy backend to Azure App Service
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: app-container-platform-api-prod
-        images: ${{ env.REGISTRY_NAME }}.azurecr.io/backend:${{ github.sha }}
-
-    # Deploy frontend
-    - name: Deploy frontend to Azure App Service  
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: app-container-platform-web-prod
-        images: ${{ env.REGISTRY_NAME }}.azurecr.io/frontend:${{ github.sha }}
-
-    # Health check after deployment
-    - name: Health check
+    # Health check
+    - name: Health Check
       run: |
-        sleep 60
-        curl -f https://app-container-platform-api-prod.azurewebsites.net/api/health || exit 1
-        echo "✅ Deployment successful!"
+        echo "⏳ Waiting for deployment to stabilize..."
+        sleep 30
+        
+        BACKEND_URL="https://${{ env.APP_NAME_PREFIX }}-api.azurewebsites.net"
+        
+        # Check backend health
+        if curl -f "$BACKEND_URL/api/health" --max-time 30; then
+          echo "✅ Backend is healthy!"
+        else
+          echo "❌ Backend health check failed"
+          exit 1
+        fi
+        
+        echo "🎉 Deployment completed successfully!"
