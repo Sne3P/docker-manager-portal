@@ -11,7 +11,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -41,6 +41,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     
     if (token && savedUser) {
       try {
+        // Re-configurer le token dans l'API client
+        api.setToken(token);
         setUser(JSON.parse(savedUser));
       } catch (error) {
         // Si les données sauvegardées sont corrompues, on nettoie
@@ -52,20 +54,19 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     setLoading(false);
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<void> => {
     try {
       const response = await api.login(email, password);
       
       if (response.data.user && response.data.token) {
         setUser(response.data.user);
         localStorage.setItem('user', JSON.stringify(response.data.user));
-        return true;
+      } else {
+        throw new Error('Invalid login response');
       }
-      
-      return false;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erreur de connexion:', error);
-      return false;
+      throw error;
     }
   };
 

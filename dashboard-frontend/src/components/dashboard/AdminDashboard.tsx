@@ -42,13 +42,14 @@ export default function AdminDashboard() {
   const loadAdminData = async () => {
     try {
       setLoading(true);
+      
       const [clientsRes, containersRes] = await Promise.all([
         api.get('/api/admin/clients'),
         api.get('/api/admin/containers')
       ]);
       
-      setClients(clientsRes.data.data || []);
-      setContainers(containersRes.data.data || []);
+      setClients(clientsRes.data || []);
+      setContainers(containersRes.data || []);
     } catch (error) {
       console.error('Failed to load admin data:', error);
     } finally {
