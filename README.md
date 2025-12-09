@@ -1,36 +1,29 @@
 ﻿# 🚀 Container Management Platform
 
-[![Deploy to Azure](https://github.com/Sne3P/docker-manager-portal/actions/workflows/deploy.yml/badge.svg)](https://github.com/Sne3P/docker-manager-portal/actions/workflows/deploy.yml)
+Plateforme de gestion de conteneurs Docker avec déploiement direct Azure.
 
-Plateforme moderne de gestion de conteneurs Docker avec déploiement automatique Azure.
+## ⚡ Déploiement ULTRA-RAPIDE (1 commande)
 
-## 🎯 Déploiement Ultra-Simple (3 Étapes)
+```powershell
+# Connectez-vous à Azure
+az login
 
-### Étape 1 : Azure Cloud Shell
-Allez sur **https://shell.azure.com** et exécutez :
-```bash
-az ad sp create-for-rbac --name "github-container-platform" --role contributor --scopes /subscriptions/$(az account show --query id -o tsv) --json-auth
-```
-**Copiez tout le JSON affiché** ⬇️
-
-### Étape 2 : GitHub Secrets
-1. **GitHub** → **Settings** → **Secrets and variables** → **Actions**
-2. Créez 2 secrets :
-   - `AZURE_CREDENTIALS` : Collez le JSON de l'étape 1
-   - `DB_ADMIN_PASSWORD` : `MySecurePassword123!`
-
-### Étape 3 : Déploiement
-```bash
-git push origin main
+# Déployez tout en 1 fois
+.\deploy-minimal.ps1
 ```
 
-**C'est tout !** 🎉 Le déploiement automatique se lance !
+**C'est tout !** 🎉 
 
-## 🌐 Résultat
+## 🌐 Résultat (2-3 minutes)
 
-Après déploiement (5-10 minutes), votre application sera disponible :
-- **Frontend :** `https://container-platform-web.azurewebsites.net`
-- **API :** `https://container-platform-api.azurewebsites.net`
+- **Frontend :** `https://container-simple-web.azurewebsites.net`
+- **API :** `https://container-simple-api.azurewebsites.net/api/health`
+
+## 🧹 Nettoyage
+
+```powershell
+az group delete --name rg-container-simple --yes --no-wait
+```
 
 ## ✨ Features
 
