@@ -73,9 +73,6 @@ class DockerService {
       // Add command if specified
       if (request.cmd) {
         createOptions.Cmd = request.cmd;
-        logger.info(`Adding command to container: ${JSON.stringify(request.cmd)}`);
-      } else {
-        logger.warn(`No command specified for container: ${request.name}`);
       }
 
       // Configure port mappings
@@ -103,9 +100,7 @@ class DockerService {
     try {
       const container = this.docker.getContainer(id);
       await container.start();
-      logger.info(`Container started: ${id}`);
     } catch (error: any) {
-      logger.error(`Failed to start container ${id}:`, error);
       throw new Error(`Failed to start container: ${error.message || 'Unknown error'}`);
     }
   }
@@ -114,9 +109,7 @@ class DockerService {
     try {
       const container = this.docker.getContainer(id);
       await container.stop();
-      logger.info(`Container stopped: ${id}`);
     } catch (error: any) {
-      logger.error(`Failed to stop container ${id}:`, error);
       throw new Error(`Failed to stop container: ${error.message || 'Unknown error'}`);
     }
   }

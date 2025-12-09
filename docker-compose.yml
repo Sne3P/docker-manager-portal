@@ -14,15 +14,9 @@ services:
       - PORT=5000
       - JWT_SECRET=dev-secret-change-in-production
       - JWT_EXPIRES_IN=24h
-      - DOCKER_SOCKET_PATH=/var/run/docker.sock
-      - DOCKER_HOST=unix:///var/run/docker.sock
       - FRONTEND_URL=http://localhost:3000
-      - NGINX_URL=http://localhost
-      - LOG_LEVEL=debug
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:rw
-      - ./dashboard-backend/logs:/app/logs
-      - ./dashboard-backend/src:/app/src:ro
     networks:
       - container-manager-network
     restart: unless-stopped
@@ -31,11 +25,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    labels:
-      - "service.name=container-manager-backend"
-      - "service.type=api"
-      - "environment=development"
 
   # Frontend Dashboard
   frontend:
@@ -48,9 +37,7 @@ services:
     environment:
       - NODE_ENV=development
       - NEXT_PUBLIC_API_URL=http://localhost:5000/api
-      - NEXT_PUBLIC_SOCKET_URL=http://localhost:5000
       - NEXT_PUBLIC_APP_NAME=Container Manager
-      - NEXT_PUBLIC_ENABLE_REAL_TIME=true
     depends_on:
       backend:
         condition: service_healthy
@@ -62,11 +49,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    labels:
-      - "service.name=container-manager-frontend"
-      - "service.type=web"
-      - "environment=development"
 
 
 
@@ -86,9 +68,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    labels:
-      - "service.name=redis"
-      - "service.type=database"
 
   # Nginx (Reverse proxy and load balancer)
   nginx:
@@ -111,24 +90,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    labels:
-      - "service.name=nginx"
-      - "service.type=proxy"
 
 networks:
   container-manager-network:
     driver: bridge
-    name: container-manager-network
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
 
 volumes:
   redis-data:
-    name: container-manager-redis-data
     driver: local
-
-# Development helpers
-x-common-variables: &common-variables
-  COMPOSE_PROJECT_NAME: container-manager-dev
-  COMPOSE_FILE: docker-compose.yml

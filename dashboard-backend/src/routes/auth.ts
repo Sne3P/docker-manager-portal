@@ -1,8 +1,7 @@
 import express, { Response } from 'express';
-import bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
-import { AuthRequest, findUserByEmail } from '../middleware/auth';
+import { AuthRequest, validateCredentials } from '../middleware/auth';
 import { AuthResponse, LoginRequest } from '../types';
 import { logger } from '../utils/logger';
 
@@ -10,7 +9,7 @@ const router = express.Router();
 
 // Login route
 router.post('/login', [
-  body('email').isEmail().normalizeEmail(),
+  body('email').notEmpty(),
   body('password').isLength({ min: 6 })
 ], async (req: AuthRequest, res: Response) => {
   try {
@@ -25,23 +24,10 @@ router.post('/login', [
 
     const { email, password }: LoginRequest = req.body;
     
-    // Find user (in production, use database with hashed passwords)
-    const user = findUserByEmail(email);
+    // Validate credentials
+    const user = validateCredentials(email, password);
     
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // In production, compare with bcrypt.compare(password, user.hashedPassword)
-    // For demo, we use simple password check (NOT for production!)
-    const validPassword = email === 'admin@containerplatform.com' && password === 'admin123' ||
-                         email === 'client1@example.com' && password === 'client123' ||
-                         email === 'client2@example.com' && password === 'client123';
-
-    if (!validPassword) {
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -65,29 +51,24 @@ router.post('/login', [
     }
     
     const tokenOptions = { expiresIn: (process.env.JWT_EXPIRES_IN || '24h') as any };
-    const payload = { userId: user.id, role: user.role, clientId: user.clientId, email: user.email, name: user.name };
+    const payload = { userId: user.id, role: user.role, clientId: user.clientId || undefined, email: email, name: user.name };
     const token = jwt.sign(payload, jwtSecret, tokenOptions);
-    
-    logger.info(`Token generated for user ${user.email}. Payload: ${JSON.stringify(payload)}`);
-
-    // Update last login (in production, update database)
-    user.lastLogin = new Date();
 
     const response: AuthResponse = {
       user: {
         id: user.id,
-        email: user.email,
+        email: email,
         role: user.role,
-        clientId: user.clientId,
+        clientId: user.clientId || undefined,
         name: user.name,
-        createdAt: user.createdAt,
-        lastLogin: user.lastLogin
+        createdAt: new Date(),
+        lastLogin: new Date()
       },
       token,
       expiresIn: process.env.JWT_EXPIRES_IN || '24h'
     };
 
-    logger.info(`User ${user.email} logged in successfully`);
+    logger.info(`User ${email} logged in successfully`);
 
     res.json({
       success: true,
