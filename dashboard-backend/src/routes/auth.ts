@@ -1,3 +1,20 @@
+/**
+ * Authentication Routes for Container Management Platform
+ * 
+ * Provides secure user authentication endpoints:
+ * - POST /api/auth/login - User authentication with JWT
+ * - POST /api/auth/logout - Secure session termination
+ * 
+ * Security features:
+ * - Input validation and sanitization
+ * - JWT token generation with expiration
+ * - Role-based access control
+ * - Audit logging for security events
+ * 
+ * @author Container Platform Team
+ * @version 1.0.0
+ */
+
 import express, { Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
@@ -7,10 +24,26 @@ import { logger } from '../utils/logger';
 
 const router = express.Router();
 
-// Login route
+/**
+ * POST /api/auth/login
+ * 
+ * Authenticates user credentials and returns JWT token
+ * 
+ * Request body:
+ * - email: User identifier (admin, client1, client2)
+ * - password: User password (min 6 characters)
+ * 
+ * Response:
+ * - 200: Authentication successful with JWT token
+ * - 400: Validation errors in request
+ * - 401: Invalid credentials
+ * - 500: Server error
+ * 
+ * Security: Rate limiting should be applied in production
+ */
 router.post('/login', [
-  body('email').notEmpty(),
-  body('password').isLength({ min: 6 })
+  body('email').notEmpty().withMessage('Email/username is required'),
+  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters')
 ], async (req: AuthRequest, res: Response) => {
   try {
     const errors = validationResult(req);

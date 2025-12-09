@@ -1,0 +1,84 @@
+name: Quick Deploy Test
+
+# Test rapide de déploiement pour validation
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to test?'
+        required: true
+        default: 'plan-only'
+        type: choice
+        options:
+        - 'plan-only'
+        - 'deploy-full'
+
+env:
+  RESOURCE_GROUP: "rg-container-platform-test"
+  REGISTRY_NAME: "acrcontainerplatformtest"
+  PROJECT_NAME: "container-platform"
+
+jobs:
+  test-deployment:
+    runs-on: ubuntu-latest
+    name: Test Azure Deployment
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Verify Azure Access
+      run: |
+        echo "✅ Successfully logged into Azure"
+        az account show --query "name" -o tsv
+        echo "📋 Available locations:"
+        az account list-locations --query "[].name" -o tsv | head -10
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.5.0
+
+    - name: Terraform Test
+      run: |
+        cd terraform
+        echo "🔧 Terraform Init..."
+        terraform init
+        
+        echo "🧪 Terraform Validate..."
+        terraform validate
+        
+        echo "📋 Terraform Plan..."
+        terraform plan -var="admin_password=${{ secrets.DB_ADMIN_PASSWORD || 'TestPass123!' }}" -no-color
+
+    - name: Deploy Infrastructure (if requested)
+      if: github.event.inputs.action == 'deploy-full'
+      run: |
+        cd terraform
+        echo "🚀 Deploying infrastructure..."
+        terraform apply -auto-approve -var="admin_password=${{ secrets.DB_ADMIN_PASSWORD || 'TestPass123!' }}"
+        
+        echo "📊 Getting outputs..."
+        echo "BACKEND_URL=$(terraform output -raw backend_url || echo 'not-available')" >> $GITHUB_ENV
+        echo "REGISTRY_URL=$(terraform output -raw container_registry_url || echo 'not-available')" >> $GITHUB_ENV
+
+    - name: Test Results
+      run: |
+        echo "🎉 Test completed successfully!"
+        echo ""
+        if [ "${{ github.event.inputs.action }}" == "deploy-full" ]; then
+          echo "📋 Deployed Infrastructure:"
+          echo "   Backend URL: ${{ env.BACKEND_URL }}"
+          echo "   Registry URL: ${{ env.REGISTRY_URL }}"
+          echo ""
+          echo "🧹 To cleanup resources:"
+          echo "   az group delete --name ${{ env.RESOURCE_GROUP }} --yes --no-wait"
+        else
+          echo "📋 Plan-only test completed"
+          echo "   No resources were created"
+        fi

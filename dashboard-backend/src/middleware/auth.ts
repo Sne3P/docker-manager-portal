@@ -1,9 +1,30 @@
+/**
+ * Authentication Middleware for Container Management Platform
+ * 
+ * Handles JWT token validation and user authentication
+ * Supports role-based access control (admin/client)
+ * 
+ * @author Container Platform Team
+ * @version 1.0.0
+ */
+
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { User } from '../types';
 import { logger } from '../utils/logger';
 
-// Simple user credentials (in production, use encrypted database)
+/**
+ * Mock user credentials for development and testing
+ * 
+ * In production environment, replace with:
+ * - Encrypted password storage (bcrypt)
+ * - Database-backed user management
+ * - OAuth2/SAML integration
+ * 
+ * Current roles:
+ * - admin: Full system access, all container operations
+ * - client: Limited access to own containers only
+ */
 const USERS = {
   'admin': {
     id: 'admin-1',
@@ -28,12 +49,32 @@ const USERS = {
   }
 } as const;
 
+/**
+ * Extended Express Request interface with user authentication data
+ * 
+ * Adds user property after successful JWT validation
+ * Used throughout the application for authenticated routes
+ */
 export interface AuthRequest extends Request {
   user?: User;
 }
 
+/**
+ * Main authentication middleware function
+ * 
+ * Validates JWT tokens and attaches user data to request
+ * Supports Bearer token authentication via Authorization header
+ * 
+ * @param req Express request with optional user data
+ * @param res Express response object
+ * @param next Express next function
+ * 
+ * @throws 401 if token is missing, invalid, or expired
+ * @throws 403 if user not found or inactive
+ */
 export const authenticate = (req: AuthRequest, res: Response, next: NextFunction): void => {
   try {
+    // Extract Bearer token from Authorization header
     const authHeader = req.headers.authorization;
     
     if (!authHeader?.startsWith('Bearer ')) {

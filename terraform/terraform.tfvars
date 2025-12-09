@@ -1,0 +1,9 @@
+# Terraform variables configuration
+# Copy this to terraform.tfvars and customize for your deployment
+
+project_name = "container-platform"
+environment  = "prod"
+location     = "West Europe"
+
+# REQUIRED: Set your database password
+admin_password = "MonMotDePasse123!"

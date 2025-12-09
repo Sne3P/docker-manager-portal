@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 // Import routes
 import authRoutes from './routes/auth';
 import containerRoutes from './routes/containers-prod';
+import healthRoutes from './routes/health';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -43,17 +44,8 @@ app.use(morgan('combined', { stream: { write: message => logger.info(message.tri
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    service: 'Container Manager Backend',
-    version: '1.0.0'
-  });
-});
-
-// API routes
+// API routes  
+app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/containers', containerRoutes);
 
