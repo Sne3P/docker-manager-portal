@@ -14,6 +14,15 @@ interface Container {
   url?: string;
   ports: any[];
   createdAt: string;
+  description?: string;
+  networks?: string[];
+  metrics?: {
+    cpu: { usage: number; limit: number };
+    memory: { usage: number; limit: number; percent: number; usageFormatted: string; limitFormatted: string };
+    network: { rxBytes: number; txBytes: number; rxFormatted: string; txFormatted: string };
+    uptime: number;
+    lastUpdated: string;
+  };
 }
 
 export default function ClientDashboard() {
@@ -258,6 +267,39 @@ export default function ClientDashboard() {
                             <div className="text-xs text-gray-500">
                               Created {new Date(container.createdAt).toLocaleDateString()}
                             </div>
+                            {container.metrics && (
+                              <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                                <div className="text-xs font-medium text-gray-600 mb-2">Metrics</div>
+                                <div className="grid grid-cols-3 gap-3">
+                                  <div className="text-center">
+                                    <div className="flex items-center justify-center gap-1 mb-1">
+                                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                      <span className="text-xs font-medium text-gray-600">CPU</span>
+                                    </div>
+                                    <div className="text-sm font-semibold text-blue-600">{container.metrics.cpu.usage}%</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="flex items-center justify-center gap-1 mb-1">
+                                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                      <span className="text-xs font-medium text-gray-600">Memory</span>
+                                    </div>
+                                    <div className="text-sm font-semibold text-green-600">{container.metrics.memory.usageFormatted}</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="flex items-center justify-center gap-1 mb-1">
+                                      <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                      <span className="text-xs font-medium text-gray-600">Network</span>
+                                    </div>
+                                    <div className="text-xs font-semibold text-purple-600">
+                                      ↓{container.metrics.network.rxFormatted}
+                                    </div>
+                                    <div className="text-xs font-semibold text-purple-600">
+                                      ↑{container.metrics.network.txFormatted}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

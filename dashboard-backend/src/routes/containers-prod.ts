@@ -20,7 +20,7 @@ router.get('/my', async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
 
-    const containers = await dockerService.listContainers(req.user.clientId);
+    const containers = await dockerService.listContainers(req.user.clientId, true);
 
     res.json({
       success: true,
@@ -41,7 +41,7 @@ router.get('/my', async (req: AuthRequest, res: Response): Promise<void> => {
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const clientId = req.user?.role === 'admin' ? req.query.clientId as string : req.user?.clientId;
-    const containers = await dockerService.listContainers(clientId);
+    const containers = await dockerService.listContainers(clientId, true);
 
     res.json({
       success: true,

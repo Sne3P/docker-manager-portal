@@ -14,9 +14,11 @@ import express, { Response } from 'express';
 import { AuthRequest, authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
 import ClientService from '../services/clientService';
+import { dockerService } from '../services/dockerService';
 
 const router = express.Router();
 const clientService = new ClientService();
+
 
 // Apply authentication to all admin routes
 router.use(authenticate);
@@ -30,40 +32,38 @@ router.use(authorize(['admin']));
  */
 router.get('/clients', async (req: AuthRequest, res: Response) => {
   try {
-    // Récupérer tous les clients enrichis (BDD + Docker)
-    const enrichedClients = await clientService.getAllEnrichedClients();
+    // Récupérer les vrais utilisateurs clients depuis la BDD
+    const db = clientService['db']; // Accéder à l'instance DatabaseService
+    const realClients = await db.findMany('users', { role: 'client' });
     
-    // Filtrer les containers système
-    const systemContainerNames = [
-      'container-manager-backend', 
-      'container-manager-frontend', 
-      'container-manager-nginx', 
-      'container-manager-postgres'
-    ];
-    
-    const clientContainers = enrichedClients.filter(client => 
-      !systemContainerNames.includes(client.name)
-    );
-
-    // Mapper vers le format attendu par le frontend
-    const clients = clientContainers.map(client => ({
-      id: client.name,
-      name: client.name.replace('-', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-      email: `${client.name}@example.com`,
-      createdAt: client.created_at.toISOString(),
-      isActive: client.status === 'active',
-      containerQuota: 10,
-      usedContainers: 1,
-      description: client.description,
-      dockerStatus: client.docker_status,
-      dockerImage: client.docker_image
+    // Pour chaque client, compter ses conteneurs
+    const clientsWithStats = await Promise.all(realClients.map(async (client: any) => {
+      const clientId = client.email.split('@')[0]; // client1, client2, client3
+      const clientContainers = await clientService.getAllEnrichedClients(clientId);
+      
+      const runningContainers = clientContainers.filter(c => c.status === 'active').length;
+      const totalContainers = clientContainers.length;
+      
+      return {
+        id: client.id,
+        name: clientId,
+        email: client.email,
+        createdAt: client.created_at,
+        lastLogin: client.last_login,
+        isActive: client.is_active,
+        containerQuota: 10,
+        totalContainers: totalContainers,
+        runningContainers: runningContainers,
+        stoppedContainers: totalContainers - runningContainers,
+        role: client.role
+      };
     }));
 
-    logger.info(`Admin ${req.user?.email} retrieved ${clients.length} clients`);
+    logger.info(`Admin ${req.user?.email} retrieved ${clientsWithStats.length} real clients`);
     
     res.json({
       success: true,
-      data: clients
+      data: clientsWithStats
     });
   } catch (error) {
     logger.error('Admin get clients error:', error);
@@ -81,10 +81,10 @@ router.get('/clients', async (req: AuthRequest, res: Response) => {
  */
 router.get('/containers', async (req: AuthRequest, res: Response) => {
   try {
-    // Récupérer tous les containers enrichis
-    const enrichedContainers = await clientService.getAllEnrichedClients();
+    // Récupérer tous les containers Docker avec métriques
+    const allContainers = await dockerService.listContainers(undefined, true);
     
-    // Filtrer les containers système et mapper pour l'admin
+    // Filtrer les containers système
     const systemContainerNames = [
       'container-manager-backend', 
       'container-manager-frontend', 
@@ -92,22 +92,21 @@ router.get('/containers', async (req: AuthRequest, res: Response) => {
       'container-manager-postgres'
     ];
     
-    const adminContainers = enrichedContainers
+    const adminContainers = allContainers
       .filter(container => !systemContainerNames.includes(container.name))
       .map(container => ({
-        id: container.docker_container_id || container.id.toString(),
+        id: container.id,
         name: container.name,
-        clientId: container.name,
-        serviceType: container.docker_image?.includes('nginx') ? 'nginx' : 
-                    container.docker_image?.includes('node') ? 'nodejs' : 'custom',
-        status: container.docker_status || container.status,
-        image: container.docker_image || 'unknown',
-        ports: container.docker_ports || [],
-        createdAt: container.docker_created || container.created_at,
-        url: container.docker_ports?.[0] ? 
-             `http://localhost:${container.docker_ports[0].public_port}` : null,
-        description: container.description,
-        networks: container.docker_networks
+        clientId: container.clientId,
+        serviceType: container.serviceType,
+        status: container.status,
+        image: container.image,
+        ports: container.ports,
+        createdAt: container.created,
+        url: container.url,
+        description: `Container ${container.name}`,
+        networks: container.networks,
+        metrics: container.metrics
       }));
 
     logger.info(`Admin ${req.user?.email} retrieved ${adminContainers.length} containers`);

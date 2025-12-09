@@ -5,13 +5,16 @@ import { Icons } from '../ui/Icons';
 import Button from '../ui/Button';
 
 interface Client {
-  id: string;
+  id: number;
   name: string;
   email: string;
   createdAt: string;
   isActive: boolean;
   containerQuota: number;
-  usedContainers: number;
+  totalContainers: number;
+  runningContainers: number;
+  stoppedContainers: number;
+  role: string;
 }
 
 interface Container {
@@ -24,6 +27,15 @@ interface Container {
   url?: string;
   ports: any[];
   createdAt: string;
+  description: string;
+  networks: string[];
+  metrics?: {
+    cpu: { usage: number; limit: number };
+    memory: { usage: number; limit: number; percent: number; usageFormatted: string; limitFormatted: string };
+    network: { rxBytes: number; txBytes: number; rxFormatted: string; txFormatted: string };
+    uptime: number;
+    lastUpdated: string;
+  };
 }
 
 export default function AdminDashboard() {
@@ -234,9 +246,9 @@ export default function AdminDashboard() {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-1 text-sm text-gray-600">
-                          <Icons.Container size={14} />
-                          {containers.filter(c => c.clientId === client.id).length}
+                        <div className="space-y-1">
+                          <div className="text-blue-600 font-semibold">{client.runningContainers} actifs</div>
+                          <div className="text-gray-500 text-xs">{client.totalContainers} total</div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -280,6 +292,9 @@ export default function AdminDashboard() {
                     <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                       Status
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                      Métriques
+                    </th>
                     <th className="px-6 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
                       Actions
                     </th>
@@ -319,7 +334,7 @@ export default function AdminDashboard() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-2 text-sm text-gray-600">
                             <Icons.User size={14} />
-                            {clients.find(c => c.id === container.clientId)?.name || container.clientId}
+                            {clients.find(c => c.id.toString() === container.clientId)?.name || container.clientId}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
@@ -327,6 +342,26 @@ export default function AdminDashboard() {
                             <status.icon size={12} />
                             {container.status}
                           </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {container.metrics ? (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                <span className="text-xs text-gray-600">CPU {container.metrics.cpu.usage}%</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                <span className="text-xs text-gray-600">{container.metrics.memory.usageFormatted}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                <span className="text-xs text-gray-600">↓{container.metrics.network.rxFormatted}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-400">-</span>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right">
                           <div className="flex items-center gap-2 justify-end">

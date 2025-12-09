@@ -11,16 +11,17 @@ class DockerService {
     });
   }
 
-  async listContainers(clientId?: string): Promise<Container[]> {
+  async listContainers(clientId?: string, includeMetrics: boolean = false): Promise<Container[]> {
     try {
       const containers = await this.docker.listContainers({ all: true });
       
-      return containers
-        .filter((container: any) => {
-          // Filter by client if specified
-          return !clientId || container.Labels?.clientId === clientId;
-        })
-        .map((container: any) => ({
+      const filteredContainers = containers.filter((container: any) => {
+        // Filter by client if specified
+        return !clientId || container.Labels?.clientId === clientId;
+      });
+
+      return await Promise.all(filteredContainers.map(async (container: any) => {
+        const baseContainer = {
           id: container.Id,
           name: container.Names[0]?.substring(1), // Remove leading slash
           image: container.Image,
@@ -28,12 +29,7 @@ class DockerService {
           created: new Date(container.Created * 1000).toISOString(),
           clientId: container.Labels?.clientId || container.Labels?.client || '',
           serviceType: container.Labels?.serviceType || 'custom',
-          url: container.Labels?.serviceType ? 
-            this.generateClientUrl(
-              container.Labels?.clientId || container.Labels?.client || '', 
-              container.Labels?.serviceType,
-              container.Ports?.find((p: any) => p.PrivatePort === 80)?.PublicPort || 8000
-            ) : undefined,
+          url: this.generateContainerUrl(container),
           labels: container.Labels || {},
           ports: container.Ports?.map((port: any) => ({
             containerPort: port.PrivatePort,
@@ -41,11 +37,58 @@ class DockerService {
             protocol: port.Type as 'tcp' | 'udp'
           })) || [],
           networks: Object.keys(container.NetworkSettings?.Networks || {}),
-        }));
+        };
+
+        // Ajouter les métriques si demandées et si le container est en cours d'exécution
+        if (includeMetrics && container.State === 'running') {
+          try {
+            const stats = await this.getContainerStats(container.Id);
+            return {
+              ...baseContainer,
+              metrics: {
+                cpu: stats.cpu,
+                memory: {
+                  ...stats.memory,
+                  usageFormatted: this.formatBytes(stats.memory.usage),
+                  limitFormatted: this.formatBytes(stats.memory.limit)
+                },
+                network: {
+                  ...stats.network,
+                  rxFormatted: this.formatBytes(stats.network.rxBytes),
+                  txFormatted: this.formatBytes(stats.network.txBytes)
+                },
+                uptime: Math.floor((Date.now() - new Date(container.Created * 1000).getTime()) / 1000),
+                lastUpdated: stats.timestamp
+              }
+            };
+          } catch (error) {
+            logger.warn(`Failed to get metrics for container ${container.Id}:`, error);
+            return baseContainer;
+          }
+        }
+
+        return baseContainer;
+      }));
     } catch (error) {
       logger.error('Failed to list containers:', error);
       throw new Error('Failed to retrieve containers');
     }
+  }
+
+  private generateContainerUrl(container: any): string | undefined {
+    const port = container.Ports?.find((p: any) => p.PublicPort);
+    if (port) {
+      return `http://localhost:${port.PublicPort}`;
+    }
+    return undefined;
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
   async createContainer(request: CreateContainerRequest): Promise<string> {
@@ -156,32 +199,45 @@ class DockerService {
   async getContainerStats(id: string): Promise<ContainerStats> {
     try {
       const container = this.docker.getContainer(id);
-      const stream = await container.stats({ stream: false });
       
-      // Parse Docker stats
-      const stats = JSON.parse(stream.toString());
+      // Récupérer les stats sans stream
+      const statsData = await container.stats({ stream: false });
       
-      // Calculate CPU percentage
-      const cpuDelta = stats.cpu_stats?.cpu_usage?.total_usage - 
-                     (stats.precpu_stats?.cpu_usage?.total_usage || 0);
-      const systemDelta = stats.cpu_stats?.system_cpu_usage - 
-                         (stats.precpu_stats?.system_cpu_usage || 0);
-      const cpuUsage = systemDelta > 0 ? (cpuDelta / systemDelta) * 100 : 0;
+      // Le résultat est déjà un objet JSON, pas besoin de parser
+      let stats = statsData as any;
+      
+      // Calculer le pourcentage CPU
+      let cpuUsage = 0;
+      if (stats.cpu_stats && stats.precpu_stats && stats.cpu_stats.cpu_usage && stats.precpu_stats.cpu_usage) {
+        const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - (stats.precpu_stats.cpu_usage.total_usage || 0);
+        const systemDelta = stats.cpu_stats.system_cpu_usage - (stats.precpu_stats.system_cpu_usage || 0);
+        
+        if (systemDelta > 0 && cpuDelta > 0) {
+          const numCpus = stats.cpu_stats.cpu_usage.percpu_usage?.length || 1;
+          cpuUsage = (cpuDelta / systemDelta) * numCpus * 100;
+        }
+      }
 
-      // Calculate memory usage
+      // Calculer l'usage mémoire
       const memoryUsage = stats.memory_stats?.usage || 0;
-      const memoryLimit = stats.memory_stats?.limit || 1;
-      const memoryPercent = (memoryUsage / memoryLimit) * 100;
+      const memoryLimit = stats.memory_stats?.limit || 0;
+      const memoryPercent = memoryLimit > 0 ? (memoryUsage / memoryLimit) * 100 : 0;
 
-      // Calculate network I/O
-      const networks = stats.networks || {};
-      const networkRx = Object.values(networks).reduce((sum: number, net: any) => sum + (net.rx_bytes || 0), 0);
-      const networkTx = Object.values(networks).reduce((sum: number, net: any) => sum + (net.tx_bytes || 0), 0);
+      // Calculer les I/O réseau
+      let networkRx = 0;
+      let networkTx = 0;
+      
+      if (stats.networks) {
+        for (const [, networkData] of Object.entries(stats.networks) as [string, any][]) {
+          networkRx += networkData.rx_bytes || 0;
+          networkTx += networkData.tx_bytes || 0;
+        }
+      }
 
       return {
         containerId: id,
         cpu: {
-          usage: isNaN(cpuUsage) ? 0 : Math.round(cpuUsage * 100) / 100
+          usage: Math.round(Math.max(0, cpuUsage) * 100) / 100
         },
         memory: {
           usage: memoryUsage,
@@ -196,7 +252,14 @@ class DockerService {
       };
     } catch (error: any) {
       logger.error(`Failed to get stats for container ${id}:`, error);
-      throw new Error(`Failed to get container stats: ${error.message || 'Unknown error'}`);
+      // Retourner des stats par défaut en cas d'erreur
+      return {
+        containerId: id,
+        cpu: { usage: 0 },
+        memory: { usage: 0, limit: 0, percent: 0 },
+        network: { rxBytes: 0, txBytes: 0 },
+        timestamp: new Date().toISOString()
+      };
     }
   }
 

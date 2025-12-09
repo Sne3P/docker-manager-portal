@@ -30,6 +30,13 @@ export interface Container {
   labels: Record<string, string>;
   ports: ContainerPort[];
   networks: string[];
+  metrics?: {
+    cpu: { usage: number; limit?: number };
+    memory: { usage: number; limit: number; percent: number; usageFormatted: string; limitFormatted: string };
+    network: { rxBytes: number; txBytes: number; rxFormatted: string; txFormatted: string };
+    uptime: number;
+    lastUpdated: string;
+  };
 }
 
 export interface ContainerPort {
