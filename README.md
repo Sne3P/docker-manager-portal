@@ -25,6 +25,7 @@
 - **Database**: PostgreSQL 15 (persistant)
 - **Proxy**: Nginx
 - **Docker**: Alpine images optimisées
+- **Cloud Agent**: Gestionnaire intelligent de conteneurs multi-tenant ([En savoir plus](./CLOUD-AGENT.md))
 
 ## 🚀 Déploiement Production (1 commande)
 
@@ -116,6 +117,11 @@ az group delete --name rg-container-complete --yes --no-wait
 ---
 
 **🎯 Solution complète, professionnelle et reproductible sur n'importe quelle machine avec Azure CLI !**
+
+## 📚 Documentation
+
+- **[Cloud Agent Guide](./CLOUD-AGENT.md)** - Comprendre le rôle et le fonctionnement du Cloud Agent
+- **[README](./README.md)** - Guide de démarrage rapide et installation
 
 ## ✨ Features
 
