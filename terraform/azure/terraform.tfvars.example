@@ -1,0 +1,27 @@
+# =====================================================
+# VARIABLES TERRAFORM
+# =====================================================
+
+# Variables obligatoires
+admin_email = "votre.email@example.com"
+
+# Variables optionnelles (avec valeurs par défaut)
+project_name = "portail-cloud"
+environment  = "dev"
+location     = "West Europe"  # Ou "France Central" si vous préférez
+
+# =====================================================
+# CONFIGURATION POUR DIFFÉRENTS ENVIRONNEMENTS
+# =====================================================
+
+# Pour l'environnement de développement (coût réduit)
+# environment = "dev"
+# postgres_sku = "B_Standard_B1ms"  # 1 vCPU, 2GB RAM
+# container_apps_replicas_min = 1
+# container_apps_replicas_max = 2
+
+# Pour l'environnement de production (plus de ressources)
+# environment = "prod"
+# postgres_sku = "GP_Standard_D2s_v3"  # 2 vCPU, 8GB RAM
+# container_apps_replicas_min = 2
+# container_apps_replicas_max = 5
