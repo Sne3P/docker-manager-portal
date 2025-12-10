@@ -228,7 +228,7 @@ Le Cloud Agent est déployé automatiquement via :
 
 Ce script :
 1. ✅ Configure l'infrastructure Azure (App Service, PostgreSQL, Container Registry)
-2. ✅ Build les applications (Backend + Frontend)
+2. ✅ Compile les applications (Backend + Frontend)
 3. ✅ Déploie le Cloud Agent sur Azure App Service
 4. ✅ Configure les variables d'environnement
 5. ✅ Initialise la base de données
