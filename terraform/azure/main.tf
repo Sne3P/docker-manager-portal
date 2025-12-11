@@ -199,3 +199,24 @@ output "database_url" {
   value = "postgresql://postgres:${random_password.postgres_password.result}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/${azurerm_postgresql_flexible_server_database.main.name}?sslmode=require"
   sensitive = true
 }
+
+# Outputs pour les Container Apps
+output "backend_url" {
+  description = "URL du backend Container App"
+  value = "https://${azurerm_container_app.backend.ingress[0].fqdn}"
+}
+
+output "frontend_url" {
+  description = "URL du frontend Container App"  
+  value = "https://${azurerm_container_app.frontend.ingress[0].fqdn}"
+}
+
+output "backend_fqdn" {
+  description = "FQDN du backend Container App"
+  value = azurerm_container_app.backend.ingress[0].fqdn
+}
+
+output "frontend_fqdn" {
+  description = "FQDN du frontend Container App"
+  value = azurerm_container_app.frontend.ingress[0].fqdn
+}

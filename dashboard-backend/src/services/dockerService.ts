@@ -571,6 +571,23 @@ class DockerService {
       throw new Error(`Failed to get container details: ${error.message || 'Unknown error'}`);
     }
   }
+
+  async cleanupTestContainers(): Promise<void> {
+    try {
+      if (this.isAzureEnvironment) {
+        // Dans l'environnement Azure, déléguer au service Azure
+        return await azureContainerService.cleanupTestContainers();
+      } else {
+        // Dans l'environnement local, nettoyer les containers Docker locaux
+        // Pour l'instant, juste retourner sans erreur
+        logger.info('Local cleanup not implemented yet');
+        return;
+      }
+    } catch (error: any) {
+      logger.error('Failed to cleanup test containers:', error);
+      throw new Error(`Failed to cleanup test containers: ${error.message || 'Unknown error'}`);
+    }
+  }
 }
 
 export const dockerService = new DockerService();

@@ -165,6 +165,9 @@ class AzureContainerService {
         .replace(/-+/g, '-')     // Pas de tirets multiples
         .substring(0, 31);       // Max 31 chars (sécurité)
       
+      // Déterminer l'image correcte à utiliser selon le service type
+      const correctImage = this.getImageForServiceType(request.serviceType, request.image);
+
       // Insérer le nouveau container dans la base avec status "creating"
       const result = await databaseService.query(`
         INSERT INTO user_containers (
@@ -174,7 +177,7 @@ class AzureContainerService {
       `, [
         containerId,
         request.name,
-        request.image,
+        correctImage,
         'creating',
         clientId,
         request.serviceType || 'custom',
@@ -305,8 +308,8 @@ class AzureContainerService {
       
       const azureAppName = result.rows[0].azure_app_name;
       
-      // Arrêter le Container App Azure en mettant les replicas à 0
-      await this.runAzureCommand(`az containerapp update --name ${azureAppName} --resource-group ${this.resourceGroup} --min-replicas 0 --max-replicas 0`);
+      // Arrêter le Container App Azure en mettant min-replicas à 0 mais max-replicas à 1 (minimum requis par Azure)
+      await this.runAzureCommand(`az containerapp update --name ${azureAppName} --resource-group ${this.resourceGroup} --min-replicas 0 --max-replicas 1`);
       
       await databaseService.query(
         'UPDATE user_containers SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE container_id = $2',
@@ -317,6 +320,40 @@ class AzureContainerService {
     } catch (error: any) {
       logger.error('Error stopping container:', error);
       throw new Error(`Failed to stop container: ${error.message}`);
+    }
+  }
+
+  async cleanupTestContainers(): Promise<void> {
+    try {
+      logger.info('Cleaning up test/simulation containers...');
+      
+      // Supprimer tous les containers qui ne sont pas des vrais Azure Container Apps
+      // (ceux qui n'ont pas d'azure_app_name ou qui commencent par test/sim)
+      const testContainers = await databaseService.query(`
+        SELECT container_id, azure_app_name FROM user_containers 
+        WHERE azure_app_name IS NULL 
+        OR azure_app_name LIKE 'test-%' 
+        OR azure_app_name LIKE 'sim-%'
+        OR container_id LIKE 'test-%'
+        OR container_id LIKE 'sim-%'
+      `);
+      
+      logger.info(`Found ${testContainers.rows.length} test containers to clean up`);
+      
+      // Supprimer de la base de données
+      await databaseService.query(`
+        DELETE FROM user_containers 
+        WHERE azure_app_name IS NULL 
+        OR azure_app_name LIKE 'test-%' 
+        OR azure_app_name LIKE 'sim-%'
+        OR container_id LIKE 'test-%'
+        OR container_id LIKE 'sim-%'
+      `);
+      
+      logger.info('Test containers cleaned up successfully');
+    } catch (error: any) {
+      logger.error('Error cleaning up test containers:', error);
+      throw new Error(`Failed to cleanup test containers: ${error.message}`);
     }
   }
 
@@ -393,12 +430,42 @@ ${new Date().toISOString()} Status: Check Azure Portal for real-time status`;
         return 80;
       case 'nodejs':
         return 3000;
+      case 'python':
+        return 8080;
       case 'redis':
         return 6379;
       case 'postgres':
+      case 'database':
         return 5432;
       default:
         return 80;
+    }
+  }
+
+  private getImageForServiceType(serviceType?: string, customImage?: string): string {
+    // Si une image personnalisée est fournie et que le type est custom, l'utiliser
+    if (serviceType === 'custom' && customImage) {
+      return customImage;
+    }
+    
+    // Utiliser des images avec serveurs web qui fonctionnent directement
+    switch (serviceType) {
+      case 'nginx':
+        return 'nginx:alpine';
+      case 'apache':
+        return 'httpd:alpine';
+      case 'nodejs':
+        return 'nginx:alpine'; // Temporairement nginx jusqu'à ce qu'on ait une vraie image Node.js
+      case 'python':
+        return 'nginx:alpine'; // Temporairement nginx jusqu'à ce qu'on ait une vraie image Python
+      case 'redis':
+        return 'redis:alpine';
+      case 'postgres':
+        return 'postgres:15-alpine';
+      case 'database':
+        return 'postgres:15-alpine';
+      default:
+        return customImage || 'nginx:alpine'; // Fallback sur nginx
     }
   }
 

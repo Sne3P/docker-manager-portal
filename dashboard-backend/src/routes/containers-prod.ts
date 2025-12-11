@@ -394,4 +394,23 @@ router.get('/:id/stats', async (req: AuthRequest, res: Response): Promise<void> 
   }
 });
 
+// Cleanup test/simulation containers (admin only)
+router.delete('/cleanup-test', authorize(['admin']), async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    await dockerService.cleanupTestContainers();
+
+    res.json({
+      success: true,
+      message: 'Test containers cleaned up successfully'
+    });
+  } catch (error: any) {
+    logger.error('Cleanup test containers error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cleanup test containers',
+      error: error.message
+    });
+  }
+});
+
 export default router;

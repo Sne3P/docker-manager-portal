@@ -12,7 +12,7 @@ resource "azurerm_container_app" "backend" {
   template {
     container {
       name   = "backend"
-      image  = "${azurerm_container_registry.main.login_server}/dashboard-backend:real-azure-msi"
+      image  = "${azurerm_container_registry.main.login_server}/container-manager-backend:real-azure-msi"
       cpu    = 0.5
       memory = "1Gi"
 
@@ -38,7 +38,7 @@ resource "azurerm_container_app" "backend" {
       
       env {
         name  = "FRONTEND_URL"
-        value = "https://frontend-${var.unique_id}.delightfulflower-c37029b5.francecentral.azurecontainerapps.io"
+        value = "https://frontend-${var.unique_id}.${azurerm_container_app_environment.main.default_domain}"
       }
 
       env {
@@ -121,18 +121,13 @@ resource "azurerm_container_app" "frontend" {
   template {
     container {
       name   = "frontend"
-      image  = "${azurerm_container_registry.main.login_server}/dashboard-frontend:api-fixed"
+      image  = "${azurerm_container_registry.main.login_server}/dashboard-frontend:latest"
       cpu    = 0.5
       memory = "1Gi"
 
       env {
         name  = "NODE_ENV"
         value = "production"
-      }
-
-      env {
-        name  = "NEXT_PUBLIC_API_URL"
-        value = "https://backend-${var.unique_id}.delightfulflower-c37029b5.francecentral.azurecontainerapps.io"
       }
 
       env {
@@ -184,11 +179,4 @@ resource "azurerm_container_app" "frontend" {
 #   principal_id         = azurerm_container_app.backend.identity[0].principal_id
 # }
 
-# Outputs
-output "frontend_url" {
-  value = "https://${azurerm_container_app.frontend.ingress[0].fqdn}"
-}
-
-output "backend_url" {
-  value = "https://${azurerm_container_app.backend.ingress[0].fqdn}"
-}
+# Outputs moved to main.tf to avoid duplication

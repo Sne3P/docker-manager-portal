@@ -50,9 +50,12 @@ docker build -t "$acrServer/dashboard-backend:real-azure-msi" ./dashboard-backen
 Write-Host "  Poussée du backend avec intégration Azure réelle..." -ForegroundColor White
 docker push "$acrServer/dashboard-backend:real-azure-msi"
 
-# Build and push frontend  
-Write-Host "  Construction et poussée du frontend..." -ForegroundColor White
-docker build -t "$acrServer/dashboard-frontend:latest" ./dashboard-frontend
+# Build and push frontend avec l'URL backend correcte
+Write-Host "  Construction du frontend avec URL API dynamique..." -ForegroundColor White
+$containerAppDomain = "delightfulflower-c37029b5.francecentral.azurecontainerapps.io"  # Domaine fixe Azure Container Apps
+$backendUrl = "https://backend-${uniqueId}.${containerAppDomain}/api"
+docker build --build-arg NEXT_PUBLIC_API_URL="$backendUrl" -t "$acrServer/dashboard-frontend:latest" ./dashboard-frontend
+Write-Host "  Poussée du frontend avec URL: $backendUrl" -ForegroundColor White
 docker push "$acrServer/dashboard-frontend:latest"
 
 Write-Host "✓ Images déployées (backend avec intégration Azure réelle)" -ForegroundColor Green
@@ -115,9 +118,9 @@ if ($backendUrl -and $frontendUrl) {
     az containerapp update --name "backend-$uniqueId" --resource-group $rgName `
         --set-env-vars "FRONTEND_URL=$frontendUrl" "NODE_ENV=production" 2>$null | Out-Null
         
-    # Configuration du frontend
+    # Configuration du frontend - NOTE: NEXT_PUBLIC_API_URL est maintenant défini au build-time
     az containerapp update --name "frontend-$uniqueId" --resource-group $rgName `
-        --set-env-vars "NEXT_PUBLIC_API_URL=$backendUrl" "NODE_ENV=production" 2>$null | Out-Null
+        --set-env-vars "NODE_ENV=production" 2>$null | Out-Null
         
     Write-Host "✓ Variables d'environnement configurées" -ForegroundColor Green
     

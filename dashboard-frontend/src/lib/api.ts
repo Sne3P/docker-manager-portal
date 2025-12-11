@@ -1,16 +1,14 @@
 // Configuration automatique dev/prod avec support URLs dynamiques
 const getApiBaseUrl = () => {
-  // En production (Azure), utilise toujours NEXT_PUBLIC_API_URL si défini
-  if (process.env.NODE_ENV === 'production') {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (backendUrl) {
-      // L'URL du backend Azure ne contient pas /api, il faut l'ajouter
-      return `${backendUrl}/api`;
-    }
-    return 'http://localhost:5000/api';
+  // Utilise la variable d'environnement si définie, sinon localhost pour dev
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (apiUrl) {
+    console.log('[API Config] Using NEXT_PUBLIC_API_URL:', apiUrl);
+    return apiUrl;
   }
   
-  // En développement local
+  // Fallback pour développement local
+  console.log('[API Config] Using localhost fallback');
   return 'http://localhost:5000/api';
 };
 
