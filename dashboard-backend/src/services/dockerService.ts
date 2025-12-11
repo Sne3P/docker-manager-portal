@@ -22,8 +22,18 @@ class DockerService {
   }
 
   private detectAzureEnvironment(): boolean {
+    // Check for explicit Azure environment variable
+    if (process.env.AZURE_ENVIRONMENT === 'true') {
+      return true;
+    }
+    
     // Check for Azure Container Apps environment variables
     if (process.env.CONTAINER_APP_NAME || process.env.AZURE_CLIENT_ID) {
+      return true;
+    }
+    
+    // Check if NODE_ENV is production and DATABASE_URL contains Azure
+    if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL?.includes('postgres.database.azure.com')) {
       return true;
     }
     

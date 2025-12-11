@@ -8,6 +8,8 @@ Application web moderne pour gérer vos conteneurs Docker avec déploiement auto
 - **Interface multi-rôles** : Séparation admin/client
 - **Métriques avancées** : CPU, mémoire, réseau, stockage  
 - **Actions conteneurs** : Start/Stop/Restart en temps réel
+- **Déploiement automatique** : Infrastructure et applications en une commande
+- **Base de données auto-initialisée** : Schémas créés automatiquement
 - **Déploiement Azure** : Infrastructure as Code avec Terraform
 - **API sécurisée** : Backend Node.js + JWT
 
@@ -26,15 +28,40 @@ Application web moderne pour gérer vos conteneurs Docker avec déploiement auto
 
 ### Prérequis
 - Azure CLI installé et connecté (`az login`)
-- Compte Azure (Azure Student recommandé)
+- Docker Desktop démarré
+- PowerShell 5.1+
 
-### Déploiement en 1 commande
+### Déploiement Automatique Complet
 ```powershell
-# Clone et déploie sur Azure automatiquement
-git clone <repo-url>
-cd portail-cloud-container
-.\deploy-simple.ps1
+# Déploiement en une commande
+.\deploy-final.ps1
+
+# Validation post-déploiement (optionnel)
+.\validate-deployment-clean.ps1 -Verbose
 ```
+
+### Ce qui est automatisé :
+✅ **Infrastructure Azure** (Terraform)
+- PostgreSQL Flexible Server
+- Azure Container Apps Environment  
+- Azure Container Registry
+- Log Analytics Workspace
+
+✅ **Applications**
+- Build et push des images Docker
+- Déploiement backend/frontend
+- Configuration des variables d'environnement
+- URLs automatiquement configurées
+
+✅ **Base de Données**
+- Initialisation automatique des schémas
+- Création des utilisateurs par défaut
+- Configuration des indexes et triggers
+
+✅ **Validation**
+- Tests de connectivité
+- Vérification de l'authentification
+- Validation des endpoints API
 
 Le script fait tout automatiquement :
 - ✅ Détecte votre compte Azure

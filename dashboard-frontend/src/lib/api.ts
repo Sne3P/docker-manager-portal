@@ -4,8 +4,8 @@ const getApiBaseUrl = () => {
   if (process.env.NODE_ENV === 'production') {
     const backendUrl = process.env.NEXT_PUBLIC_API_URL;
     if (backendUrl) {
-      // L'URL du backend doit déjà inclure /api, ne pas l'ajouter
-      return backendUrl;
+      // L'URL du backend Azure ne contient pas /api, il faut l'ajouter
+      return `${backendUrl}/api`;
     }
     return 'http://localhost:5000/api';
   }

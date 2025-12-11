@@ -38,7 +38,7 @@ export default function ClientDashboard() {
   const loadContainers = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/api/containers/my');
+      const response = await api.get('/containers/my');
       setContainers(response.data);
     } catch (error) {
       console.error('Erreur lors du chargement des conteneurs:', error);
@@ -50,7 +50,7 @@ export default function ClientDashboard() {
   const handleCreateService = async (serviceType: string) => {
     try {
       setCreating(true);
-      await api.post('/api/containers/predefined', {
+      await api.post('/containers/predefined', {
         serviceType
       });
       loadContainers(); // Recharger les conteneurs
@@ -63,7 +63,7 @@ export default function ClientDashboard() {
 
   const handleDeleteContainer = async (containerId: string) => {
     try {
-      await api.delete(`/api/containers/${containerId}`);
+      await api.delete(`/containers/${containerId}`);
       loadContainers(); // Recharger les conteneurs
     } catch (error) {
       console.error('Erreur lors de la suppression du conteneur:', error);
@@ -72,7 +72,7 @@ export default function ClientDashboard() {
 
   const handleStartContainer = async (containerId: string) => {
     try {
-      await api.post(`/api/containers/${containerId}/start`);
+      await api.post(`/containers/${containerId}/start`);
       loadContainers(); // Recharger les conteneurs
     } catch (error) {
       console.error('Erreur lors du démarrage du conteneur:', error);
@@ -81,7 +81,7 @@ export default function ClientDashboard() {
 
   const handleStopContainer = async (containerId: string) => {
     try {
-      await api.post(`/api/containers/${containerId}/stop`);
+      await api.post(`/containers/${containerId}/stop`);
       loadContainers(); // Recharger les conteneurs
     } catch (error) {
       console.error('Erreur lors de l\'arrêt du conteneur:', error);

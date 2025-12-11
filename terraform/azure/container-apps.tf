@@ -77,7 +77,7 @@ resource "azurerm_container_app" "frontend" {
   template {
     container {
       name   = "frontend"
-      image  = "${azurerm_container_registry.main.login_server}/dashboard-frontend:latest"
+      image  = "${azurerm_container_registry.main.login_server}/dashboard-frontend:api-fixed"
       cpu    = 0.5
       memory = "1Gi"
 

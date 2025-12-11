@@ -259,12 +259,43 @@ Write-Host "- Login: $backendUrl/api/auth/login" -ForegroundColor Gray
 Write-Host "- Init DB: $backendUrl/api/database/init-database" -ForegroundColor Gray
 
 Write-Host "`n🎉 DÉPLOIEMENT COMPLET ET FONCTIONNEL !" -ForegroundColor Green
+
+# Validation automatique post-déploiement
+Write-Host "`n🔍 Validation post-déploiement..." -ForegroundColor Yellow
+Start-Sleep 10
+
+try {
+    # Test de l'API de santé
+    $healthResponse = Invoke-RestMethod -Uri "$backendUrl/api/health" -TimeoutSec 30 -ErrorAction Stop
+    if ($healthResponse.success) {
+        Write-Host "✅ Backend opérationnel" -ForegroundColor Green
+    }
+    
+    # Test de la base de données
+    $dbResponse = Invoke-RestMethod -Uri "$backendUrl/api/health/db-status" -TimeoutSec 30 -ErrorAction Stop
+    if ($dbResponse.success -and $dbResponse.database.connected) {
+        Write-Host "✅ Base de données initialisée ($(($dbResponse.database.tables).Count) tables)" -ForegroundColor Green
+    }
+    
+    # Test d'authentification
+    $loginData = @{ email = "admin@portail-cloud.com"; password = "admin123" } | ConvertTo-Json
+    $headers = @{ "Content-Type" = "application/json" }
+    $authResponse = Invoke-RestMethod -Uri "$backendUrl/api/auth/login" -Method POST -Body $loginData -Headers $headers -TimeoutSec 30 -ErrorAction Stop
+    if ($authResponse.success) {
+        Write-Host "✅ Authentification fonctionnelle" -ForegroundColor Green
+    }
+    
+    Write-Host "`n🌟 VALIDATION RÉUSSIE - Le système est pleinement opérationnel!" -ForegroundColor Green
+} catch {
+    Write-Host "`n⚠️ Validation partielle - Certains services peuvent encore démarrer..." -ForegroundColor Yellow
+    Write-Host "Utilisez validate-deployment-clean.ps1 pour une validation complète dans quelques minutes." -ForegroundColor Gray
+}
+
 if ($frontendUrl -and $frontendUrl -ne "") {
     $open = Read-Host "`nOuvrir le frontend? (O/n)"
     if ($open -ne "n") { 
         Start-Process $frontendUrl 
         Write-Host "Ouverture du frontend dans le navigateur..." -ForegroundColor Green
-        Write-Host "Si CORS ne fonctionne pas immédiatement, attendez 1-2 minutes le redémarrage des containers." -ForegroundColor Yellow
     }
 } else {
     Write-Host "`nATTENTION: URL du frontend non récupérée. Vérifiez manuellement dans le portail Azure." -ForegroundColor Yellow

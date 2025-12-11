@@ -56,8 +56,8 @@ export default function AdminDashboard() {
       setLoading(true);
       
       const [clientsRes, containersRes] = await Promise.all([
-        api.get('/api/admin/clients'),
-        api.get('/api/admin/containers')
+        api.get('/admin/clients'),
+        api.get('/admin/containers')
       ]);
       
       setClients(clientsRes.data || []);
