@@ -194,6 +194,15 @@ if ($backendUrl -and $frontendUrl) {
     az containerapp update --name "backend-$uniqueId" --resource-group $rgName `
         --set-env-vars "FRONTEND_URL=$frontendUrl" 2>$null | Out-Null
     Write-Host "✓ CORS configuré: Backend autorise $frontendUrl" -ForegroundColor Green
+    
+    # Redémarrage du backend pour appliquer la configuration CORS
+    Write-Host "Redémarrage du backend pour appliquer CORS..." -ForegroundColor White
+    $activeRevision = az containerapp revision list --name "backend-$uniqueId" --resource-group $rgName --query "[0].name" -o tsv 2>$null
+    if ($activeRevision) {
+        az containerapp revision restart --name "backend-$uniqueId" --resource-group $rgName --revision $activeRevision 2>$null | Out-Null
+        Write-Host "✓ Backend redémarré avec CORS actif" -ForegroundColor Green
+        Start-Sleep 15
+    }
 } else {
     Write-Host "❌ Erreur: URLs non trouvées, le frontend utilisera localhost en fallback" -ForegroundColor Red
     $backendUrl = ""
