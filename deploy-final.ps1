@@ -24,12 +24,8 @@ if ($Clean) {
     Pop-Location
     Write-Host "Nettoye" -ForegroundColor Green
 } else {
-    # Nettoyage préventif des Container Apps existants pour éviter les conflits
-    Write-Host "Vérification et nettoyage préventif..." -ForegroundColor Yellow
+    # Pas de nettoyage automatique - Terraform gérera les mises à jour
     $rgName = "rg-container-manager-$uniqueId"
-    az containerapp delete --name "backend-$uniqueId" --resource-group $rgName --yes --no-wait 2>$null | Out-Null
-    az containerapp delete --name "frontend-$uniqueId" --resource-group $rgName --yes --no-wait 2>$null | Out-Null
-    Start-Sleep 5
 }
 
 # Phase 1: Infrastructure seule
@@ -103,14 +99,32 @@ Write-Host "✓ Images déployées (backend avec intégration Azure réelle)" -F
 Write-Host "`nPhase 3: Container Apps..." -ForegroundColor Yellow
 Push-Location terraform\azure
 
-# Vérifier les container apps existants (préservation des URLs)
-Write-Host "Vérification des container apps existants..." -ForegroundColor Gray
+# Vérification et résolution des conflits d'état Terraform
+Write-Host "Vérification de l'état Terraform..." -ForegroundColor Gray
 $existingBackend = az containerapp show --name "backend-$uniqueId" --resource-group $rgName 2>$null
 $existingFrontend = az containerapp show --name "frontend-$uniqueId" --resource-group $rgName 2>$null
 
-if ($existingBackend -or $existingFrontend) {
-    Write-Host "⚠ Container apps existants détectés - Les URLs seront préservées" -ForegroundColor Yellow
-    Write-Host "Note: Terraform va gérer la mise à jour automatiquement" -ForegroundColor Gray
+# Vérifier l'état Terraform
+$backendInState = terraform state list | Select-String "azurerm_container_app.backend" 2>$null
+$frontendInState = terraform state list | Select-String "azurerm_container_app.frontend" 2>$null
+
+if (($existingBackend -and -not $backendInState) -or ($existingFrontend -and -not $frontendInState)) {
+    Write-Host "⚠ Conflit détecté: Container Apps existent mais pas dans l'état Terraform" -ForegroundColor Yellow
+    Write-Host "Importation automatique dans l'état Terraform..." -ForegroundColor White
+    
+    if ($existingBackend -and -not $backendInState) {
+        $backendId = ($existingBackend | ConvertFrom-Json).id
+        terraform import "azurerm_container_app.backend" $backendId 2>$null | Out-Null
+        Write-Host "✓ Backend importé dans l'état" -ForegroundColor Green
+    }
+    
+    if ($existingFrontend -and -not $frontendInState) {
+        $frontendId = ($existingFrontend | ConvertFrom-Json).id  
+        terraform import "azurerm_container_app.frontend" $frontendId 2>$null | Out-Null
+        Write-Host "✓ Frontend importé dans l'état" -ForegroundColor Green
+    }
+} elseif ($existingBackend -or $existingFrontend) {
+    Write-Host "✓ Container apps existants et synchronisés avec Terraform" -ForegroundColor Green
 }
 
 terraform plan -var="unique_id=$uniqueId" -out=tfplan2
