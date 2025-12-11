@@ -273,7 +273,23 @@ class AzureContainerService {
 
   async startContainer(containerId: string): Promise<void> {
     try {
-      logger.info(`Starting Azure Container App (INGRESS ENABLE): ${containerId}`);
+      logger.info(`Starting container (${this.isLocalMode() ? 'LOCAL' : 'AZURE'} mode): ${containerId}`);
+      
+      // Marquer comme "starting" pour le feedback UX
+      await databaseService.query(
+        'UPDATE user_containers SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE container_id = $2',
+        ['starting', containerId]
+      );
+
+      if (this.isLocalMode()) {
+        // Mode local : simulation immediate
+        await databaseService.query(
+          'UPDATE user_containers SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE container_id = $2',
+          ['running', containerId]
+        );
+        logger.info(`Container ${containerId} started successfully (local mode)`);
+        return;
+      }
       
       const result = await databaseService.query('SELECT azure_app_name, service_type FROM user_containers WHERE container_id = $1', [containerId]);
       if (result.rows.length === 0) {
@@ -295,6 +311,11 @@ class AzureContainerService {
       logger.info(`Azure Container App INGRESS ENABLED: ${containerId}`);
     } catch (error: any) {
       logger.error('Error enabling ingress:', error);
+      // Marquer comme erreur en cas d'échec
+      await databaseService.query(
+        'UPDATE user_containers SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE container_id = $2',
+        ['error', containerId]
+      );
       throw new Error(`Failed to start container: ${error.message}`);
     }
   }
@@ -302,6 +323,12 @@ class AzureContainerService {
   async stopContainer(containerId: string): Promise<void> {
     try {
       logger.info(`Stopping Azure Container App (INGRESS DISABLE): ${containerId}`);
+      
+      // Marquer comme "stopping" pour le feedback UX
+      await databaseService.query(
+        'UPDATE user_containers SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE container_id = $2',
+        ['stopping', containerId]
+      );
       
       const result = await databaseService.query('SELECT azure_app_name FROM user_containers WHERE container_id = $1', [containerId]);
       if (result.rows.length === 0) {
@@ -321,6 +348,11 @@ class AzureContainerService {
       logger.info(`Azure Container App INGRESS DISABLED: ${containerId}`);
     } catch (error: any) {
       logger.error('Error disabling ingress:', error);
+      // Marquer comme erreur en cas d'échec
+      await databaseService.query(
+        'UPDATE user_containers SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE container_id = $2',
+        ['error', containerId]
+      );
       throw new Error(`Failed to stop container: ${error.message}`);
     }
   }
@@ -433,7 +465,7 @@ ${new Date().toISOString()} Status: Check Azure Portal for real-time status`;
       case 'nodejs':
         return 3000;
       case 'python':
-        return 8080;
+        return 8000;
       case 'redis':
         return 6379;
       case 'postgres':

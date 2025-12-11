@@ -1,53 +1,61 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nginx Demo App</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #f0f8ff; }
-        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .header { color: #2c5e2e; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }
-        .status { background: #e8f5e8; padding: 15px; border-left: 4px solid #4CAF50; margin: 20px 0; }
-        .info { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 10px 0; }
-        .footer { margin-top: 30px; color: #666; font-size: 0.9em; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }
+        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.1); max-width: 800px; margin: 0 auto; }
+        .header { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 15px; margin-bottom: 30px; }
+        .status { background: linear-gradient(45deg, #2ecc71, #27ae60); color: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .info { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #3498db; }
+        .footer { margin-top: 30px; color: #7f8c8d; font-size: 0.9em; text-align: center; }
+        .badge { background: #e74c3c; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.8em; }
+        h1 { margin: 0; font-size: 2.5em; }
+        h3 { color: #2c3e50; margin-top: 0; }
+        ul { margin: 10px 0; }
+        li { margin: 8px 0; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1 class="header">🌐 Nginx Demo Application</h1>
+        <h1 class="header">🌐 Nginx Web Server <span class="badge">DEMO</span></h1>
         
         <div class="status">
-            <h3>✅ Status: Running</h3>
-            <p>This is a custom Nginx demo application running on Azure Container Apps</p>
+            <h3>✅ Status: Actif et Fonctionnel</h3>
+            <p>Serveur web Nginx personnalise deploye sur Azure Container Apps</p>
         </div>
         
         <div class="info">
-            <h3>📊 Application Info</h3>
+            <h3>📊 Informations Systeme</h3>
             <ul>
-                <li><strong>Service Type:</strong> Nginx Web Server</li>
-                <li><strong>Platform:</strong> Azure Container Apps</li>
-                <li><strong>Image:</strong> Custom nginx-demo</li>
-                <li><strong>Status:</strong> Active and Accessible</li>
+                <li><strong>Type de Service:</strong> Serveur Web Nginx</li>
+                <li><strong>Plateforme:</strong> Azure Container Apps</li>
+                <li><strong>Image:</strong> nginx-demo:latest</li>
+                <li><strong>Port:</strong> 80 (HTTP)</li>
+                <li><strong>Status:</strong> Accessible et Operationnel</li>
             </ul>
         </div>
 
         <div class="info">
-            <h3>🔧 Features</h3>
+            <h3>🔧 Caracteristiques</h3>
             <ul>
-                <li>Fast static content serving</li>
-                <li>High performance web server</li>
-                <li>Production-ready configuration</li>
-                <li>Custom demo content</li>
+                <li>Serveur web haute performance</li>
+                <li>Configuration optimisee pour la production</li>
+                <li>Gestion des fichiers statiques</li>
+                <li>Interface de demonstration personnalisee</li>
             </ul>
         </div>
 
         <div class="footer">
-            <p><em>Portail Cloud Container - Nginx Demo Service</em></p>
-            <p>Timestamp: <span id="timestamp"></span></p>
+            <p><strong>Portail Cloud Container - Service Nginx</strong></p>
+            <p>Genere le: <span id="timestamp"></span></p>
         </div>
     </div>
 
     <script>
-        document.getElementById('timestamp').textContent = new Date().toLocaleString();
+        document.getElementById('timestamp').textContent = new Date().toLocaleString('fr-FR');
     </script>
 </body>
 </html>
