@@ -40,14 +40,20 @@ Pop-Location
 Write-Host "Registry: $acrServer" -ForegroundColor Green
 Write-Host "Groupe: $rgName" -ForegroundColor Green
 
-# Phase 2: Images Docker (Build temporaire sans URLs spécifiques)
-Write-Host "`nPhase 2: Images temporaires..." -ForegroundColor Yellow
+# Phase 2: Images Docker (Backend unified + Frontend)
+Write-Host "`nPhase 2: Déploiement des images unifiées..." -ForegroundColor Yellow
 az acr login --name $acrName
-docker build -t "$acrServer/dashboard-backend:latest" ./dashboard-backend
+
+# Use the unified backend image we just built
+Write-Host "  Poussée du backend unifié (DB complète)..." -ForegroundColor White
+docker push "$acrServer/dashboard-backend:unified-db"
+
+# Build and push frontend  
+Write-Host "  Construction et poussée du frontend..." -ForegroundColor White
 docker build -t "$acrServer/dashboard-frontend:latest" ./dashboard-frontend
-docker push "$acrServer/dashboard-backend:latest"
 docker push "$acrServer/dashboard-frontend:latest"
-Write-Host "Images temporaires poussées" -ForegroundColor Green
+
+Write-Host "✓ Images unifiées déployées (backend avec DB complète)" -ForegroundColor Green
 
 # Phase 3: Container Apps avec récupération fiable des URLs
 Write-Host "`nPhase 3: Container Apps..." -ForegroundColor Yellow
@@ -118,12 +124,11 @@ if ($backendUrl -and $frontendUrl) {
     Start-Sleep 45
 }
 
-# Phase 6: Initialisation COMPLÈTE de la base de données
-Write-Host "`nPhase 6: Initialisation complète de la base de données..." -ForegroundColor Yellow
+# Phase 6: Initialisation COMPLÈTE de la base de données (UNIFIED)
+Write-Host "`nPhase 6: Initialisation unifiée de la base de données..." -ForegroundColor Yellow
 
 if ($backendUrl) {
-    # Étape 1: Initialisation des tables de base (users, activity_logs)
-    Write-Host "Initialisation des tables de base..." -ForegroundColor White
+    Write-Host "Initialisation du schéma complet via endpoint unifié..." -ForegroundColor White
     
     $maxRetries = 5
     $retryCount = 0
@@ -137,11 +142,19 @@ if ($backendUrl) {
             # Test de santé d'abord
             $healthCheck = Invoke-RestMethod "$backendUrl/api/health" -Method GET -TimeoutSec 15
             
-            # Initialisation de la DB de base
-            $dbInit = Invoke-RestMethod "$backendUrl/api/database/init-database" -Method POST -TimeoutSec 30
+            # Initialisation COMPLÈTE via endpoint unifié (maintenant équivalent à init.sql)
+            $dbInit = Invoke-RestMethod "$backendUrl/api/database/init-database" -Method POST -TimeoutSec 45
             
-            Write-Host "✓ Tables de base initialisées" -ForegroundColor Green
-            $dbInitialized = $true
+            if ($dbInit.success) {
+                Write-Host "✓ Schéma de base de données COMPLET initialisé" -ForegroundColor Green
+                Write-Host "  - Tables: users, clients, activity_logs, container_metrics" -ForegroundColor Gray
+                Write-Host "  - Index de performance créés" -ForegroundColor Gray  
+                Write-Host "  - Triggers automatiques configurés" -ForegroundColor Gray
+                Write-Host "  - Utilisateurs de test avec mots de passe bcrypt corrects" -ForegroundColor Gray
+                $dbInitialized = $true
+            } else {
+                throw "L'endpoint a retourné success=false"
+            }
             
         } catch {
             Write-Host "  ⚠ Tentative $retryCount échouée: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -152,46 +165,8 @@ if ($backendUrl) {
         }
     }
     
-    # Étape 2: Initialisation complète via script SQL
-    if ($dbInitialized) {
-        Write-Host "Initialisation du schéma complet avec script SQL..." -ForegroundColor White
-        
-        Push-Location terraform\azure
-        $postgresPassword = (terraform output -raw postgres_password 2>$null)
-        $postgresFqdn = (terraform output -raw postgres_fqdn 2>$null)
-        Pop-Location
-        
-        if ($postgresPassword -and $postgresFqdn) {
-            try {
-                # Installation de PostgreSQL client si nécessaire
-                if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
-                    Write-Host "  Installation du client PostgreSQL..." -ForegroundColor Gray
-                    winget install PostgreSQL.PostgreSQL --silent --accept-source-agreements 2>$null | Out-Null
-                }
-                
-                # Exécution du script SQL complet
-                Write-Host "  Exécution du script init.sql..." -ForegroundColor Gray
-                $env:PGPASSWORD = $postgresPassword
-                
-                # Commande psql pour exécuter le script
-                $psqlCommand = "psql -h $postgresFqdn -U postgres -d portail_cloud_db -f database/init.sql"
-                Invoke-Expression $psqlCommand 2>$null | Out-Null
-                
-                Write-Host "✓ Schéma de base de données COMPLET initialisé" -ForegroundColor Green
-                Write-Host "  - Tables: users, clients, activity_logs, container_metrics" -ForegroundColor Gray
-                Write-Host "  - Index de performance créés" -ForegroundColor Gray
-                Write-Host "  - Triggers automatiques configurés" -ForegroundColor Gray
-                Write-Host "  - Utilisateurs de test avec mots de passe corrects" -ForegroundColor Gray
-                
-            } catch {
-                Write-Host "  ⚠ Script SQL complet échoué, mais tables de base OK" -ForegroundColor Yellow
-                Write-Host "  ℹ  Les fonctionnalités avancées nécessiteront les tables manquantes" -ForegroundColor Gray
-            }
-        } else {
-            Write-Host "  ⚠ Infos PostgreSQL manquantes pour script complet" -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "❌ Échec de l'initialisation de base de la DB" -ForegroundColor Red
+    if (-not $dbInitialized) {
+        Write-Host "❌ Échec de l'initialisation de la DB après $maxRetries tentatives" -ForegroundColor Red
         Write-Host "   Vous devrez initialiser manuellement via: $backendUrl/api/database/init-database" -ForegroundColor Yellow
     }
 } else {

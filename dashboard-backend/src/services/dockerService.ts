@@ -1,18 +1,54 @@
 import Docker from 'dockerode';
 import { Container, ContainerStats, CreateContainerRequest } from '../types';
 import { logger } from '../utils/logger';
+import { azureContainerService } from './azureContainerService';
+import * as fs from 'fs';
 
 class DockerService {
-  private docker: Docker;
+  private docker: Docker | null = null;
+  private isAzureEnvironment: boolean;
 
   constructor() {
-    this.docker = new Docker({
-      socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock'
-    });
+    // Detect if we're running in Azure or local environment
+    this.isAzureEnvironment = this.detectAzureEnvironment();
+    
+    if (!this.isAzureEnvironment) {
+      this.docker = new Docker({
+        socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock'
+      });
+    }
+    
+    logger.info(`Docker service initialized for ${this.isAzureEnvironment ? 'Azure' : 'local'} environment`);
+  }
+
+  private detectAzureEnvironment(): boolean {
+    // Check for Azure Container Apps environment variables
+    if (process.env.CONTAINER_APP_NAME || process.env.AZURE_CLIENT_ID) {
+      return true;
+    }
+    
+    // Check if Docker socket exists (local environment)
+    try {
+      const socketPath = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
+      return !fs.existsSync(socketPath);
+    } catch {
+      return true; // Assume Azure if we can't check
+    }
   }
 
   async listContainers(clientId?: string, includeMetrics: boolean = false): Promise<Container[]> {
     try {
+      // Use Azure Container Service in production (simulation mode)
+      if (this.isAzureEnvironment) {
+        logger.info('Using Azure simulation mode for containers');
+        return await azureContainerService.listContainers(clientId, includeMetrics);
+      }
+
+      // Use local Docker in development
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+
       const containers = await this.docker.listContainers({ all: true });
       
       const filteredContainers = containers.filter((container: any) => {
@@ -93,6 +129,18 @@ class DockerService {
 
   async createContainer(request: CreateContainerRequest): Promise<string> {
     try {
+      // Use Azure Container Service in production
+      if (this.isAzureEnvironment) {
+        logger.info('Creating container in Azure mode');
+        const container = await azureContainerService.createContainer(request, request.clientId);
+        return container.id;
+      }
+
+      // Use local Docker in development
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+
       const { name, image, ports = [], environment = {}, labels = {}, clientId } = request;
       
       // Add client ID to labels for multi-tenant isolation
@@ -141,6 +189,17 @@ class DockerService {
 
   async startContainer(id: string): Promise<void> {
     try {
+      // Use Azure Container Service in production
+      if (this.isAzureEnvironment) {
+        await azureContainerService.startContainer(id);
+        return;
+      }
+
+      // Use local Docker in development
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+
       const container = this.docker.getContainer(id);
       await container.start();
     } catch (error: any) {
@@ -150,6 +209,17 @@ class DockerService {
 
   async stopContainer(id: string): Promise<void> {
     try {
+      // Use Azure Container Service in production
+      if (this.isAzureEnvironment) {
+        await azureContainerService.stopContainer(id);
+        return;
+      }
+
+      // Use local Docker in development
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+
       const container = this.docker.getContainer(id);
       await container.stop();
     } catch (error: any) {
@@ -159,6 +229,17 @@ class DockerService {
 
   async restartContainer(id: string): Promise<void> {
     try {
+      // In Azure, restart = stop + start
+      if (this.isAzureEnvironment) {
+        await azureContainerService.stopContainer(id);
+        await azureContainerService.startContainer(id);
+        return;
+      }
+      
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+      
       const container = this.docker.getContainer(id);
       await container.restart();
       logger.info(`Container restarted: ${id}`);
@@ -170,6 +251,15 @@ class DockerService {
 
   async removeContainer(id: string): Promise<void> {
     try {
+      if (this.isAzureEnvironment) {
+        await azureContainerService.removeContainer(id);
+        return;
+      }
+      
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+      
       const container = this.docker.getContainer(id);
       await container.remove({ force: true });
       logger.info(`Container removed: ${id}`);
@@ -181,6 +271,15 @@ class DockerService {
 
   async getContainerLogs(id: string, tail: number = 100): Promise<string[]> {
     try {
+      if (this.isAzureEnvironment) {
+        const logs = await azureContainerService.getContainerLogs(id);
+        return logs.split('\n').filter(line => line.trim());
+      }
+      
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+      
       const container = this.docker.getContainer(id);
       const logs = await container.logs({
         stdout: true,
@@ -198,6 +297,21 @@ class DockerService {
 
   async getContainerStats(id: string): Promise<ContainerStats> {
     try {
+      // In Azure, return mock stats (real Azure monitoring would use different APIs)
+      if (this.isAzureEnvironment) {
+        return {
+          containerId: id,
+          cpu: { usage: Math.random() * 50 }, // Mock usage 0-50%
+          memory: { usage: Math.random() * 1024 * 1024 * 500, limit: 1024 * 1024 * 1024, percent: Math.random() * 50 },
+          network: { rxBytes: Math.floor(Math.random() * 1000000), txBytes: Math.floor(Math.random() * 1000000) },
+          timestamp: new Date().toISOString()
+        };
+      }
+      
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+      
       const container = this.docker.getContainer(id);
       
       // Récupérer les stats sans stream
@@ -265,6 +379,17 @@ class DockerService {
 
   async streamContainerLogs(id: string, callback: (data: string) => void): Promise<void> {
     try {
+      // In Azure, simulate log streaming with periodic updates
+      if (this.isAzureEnvironment) {
+        const logs = await azureContainerService.getContainerLogs(id);
+        callback(logs);
+        return;
+      }
+      
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+      
       const container = this.docker.getContainer(id);
       const stream = await container.logs({
         stdout: true,
@@ -369,10 +494,13 @@ class DockerService {
     // Démarrer le container
     await this.startContainer(containerId);
     
-    // Récupérer le port mappé réellement par Docker
-    const containers = await this.docker.listContainers();
-    const containerInfo = containers.find((c: any) => c.Id.startsWith(containerId));
-    const mappedPort = containerInfo?.Ports?.find((p: any) => p.PrivatePort === 80)?.PublicPort || 8000 + Math.floor(Math.random() * 1000);
+    // Récupérer le port mappé réellement par Docker (seulement en local)
+    let mappedPort = 8000 + Math.floor(Math.random() * 1000);
+    if (this.docker) {
+      const containers = await this.docker.listContainers();
+      const containerInfo = containers.find((c: any) => c.Id.startsWith(containerId));
+      mappedPort = containerInfo?.Ports?.find((p: any) => p.PrivatePort === 80)?.PublicPort || mappedPort;
+    }
     
     // Générer l'URL unique avec le vrai port
     const url = `http://${clientId}-${serviceType}.localhost:${mappedPort}`;
@@ -385,6 +513,25 @@ class DockerService {
   // Obtenir les containers avec informations complètes
   async getContainerDetails(id: string): Promise<any> {
     try {
+      // In Azure, return basic container info from our service
+      if (this.isAzureEnvironment) {
+        // Get container from Azure service (simplified)
+        return {
+          id: id,
+          name: `container-${id}`,
+          image: 'unknown',
+          status: 'running',
+          created: new Date().toISOString(),
+          ports: {},
+          environment: [],
+          labels: { azure: 'true' }
+        };
+      }
+      
+      if (!this.docker) {
+        throw new Error('Docker client not initialized');
+      }
+      
       const container = this.docker.getContainer(id);
       const info = await container.inspect();
       

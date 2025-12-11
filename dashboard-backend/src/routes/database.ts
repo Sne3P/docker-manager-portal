@@ -4,7 +4,7 @@ import { logger } from '../utils/logger';
 
 const router = express.Router();
 
-// Route pour initialiser manuellement la base de données
+// Route pour initialiser manuellement la base de données (tables de base)
 router.post('/init-database', async (req, res) => {
   try {
     logger.info('🔧 Manual database initialization requested');
@@ -35,6 +35,7 @@ router.post('/init-database', async (req, res) => {
     });
   }
 });
+
 
 // Route pour vérifier l'état de la base de données
 router.get('/database-status', async (req, res) => {

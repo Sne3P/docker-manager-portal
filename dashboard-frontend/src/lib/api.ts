@@ -4,8 +4,8 @@ const getApiBaseUrl = () => {
   if (process.env.NODE_ENV === 'production') {
     const backendUrl = process.env.NEXT_PUBLIC_API_URL;
     if (backendUrl) {
-      // Si l'URL se termine déjà par /api, on la retourne telle quelle
-      return backendUrl.endsWith('/api') ? backendUrl : `${backendUrl}/api`;
+      // L'URL du backend doit déjà inclure /api, ne pas l'ajouter
+      return backendUrl;
     }
     return 'http://localhost:5000/api';
   }

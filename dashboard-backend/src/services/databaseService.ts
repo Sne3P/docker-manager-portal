@@ -66,7 +66,7 @@ class DatabaseService {
 
   public async initializeTables() {
     try {
-      console.log('🔧 Initializing database tables...');
+      console.log('🔧 Initializing COMPLETE database schema...');
       
       // Test de connexion d'abord
       await this.query('SELECT 1 as test');
@@ -87,25 +87,92 @@ class DatabaseService {
       `);
       console.log('✅ Users table created successfully');
 
+      // Création de la table clients (métadonnées enrichies)
+      console.log('📋 Creating clients table...');
+      await this.query(`
+        CREATE TABLE IF NOT EXISTS clients (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) UNIQUE NOT NULL,
+          description TEXT,
+          docker_container_id VARCHAR(255),
+          docker_image VARCHAR(255),
+          status VARCHAR(50) DEFAULT 'inactive',
+          port_mappings JSONB,
+          environment_vars JSONB,
+          resource_limits JSONB,
+          created_by INTEGER REFERENCES users(id),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('✅ Clients table created successfully');
+
       // Création de la table activity_logs  
       console.log('📋 Creating activity_logs table...');
       await this.query(`
         CREATE TABLE IF NOT EXISTS activity_logs (
           id SERIAL PRIMARY KEY,
           user_id INTEGER REFERENCES users(id),
-          client_id INTEGER,
-          action VARCHAR(255) NOT NULL,
+          client_id INTEGER REFERENCES clients(id),
+          action VARCHAR(100) NOT NULL,
           details JSONB,
-          ip_address INET,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          ip_address INET
         );
       `);
       console.log('✅ Activity logs table created successfully');
 
+      // Création de la table container_metrics (monitoring)
+      console.log('📋 Creating container_metrics table...');
+      await this.query(`
+        CREATE TABLE IF NOT EXISTS container_metrics (
+          id SERIAL PRIMARY KEY,
+          client_id INTEGER REFERENCES clients(id),
+          cpu_usage DECIMAL(5,2),
+          memory_usage_mb INTEGER,
+          network_rx_bytes BIGINT,
+          network_tx_bytes BIGINT,
+          recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('✅ Container metrics table created successfully');
+
+      // Création des index pour performance
+      console.log('🚀 Creating performance indexes...');
+      await this.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
+      await this.query(`CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(name)`);
+      await this.query(`CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status)`);
+      await this.query(`CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON activity_logs(timestamp)`);
+      await this.query(`CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs(user_id)`);
+      console.log('✅ Performance indexes created successfully');
+
+      // Création des triggers pour updated_at automatique
+      console.log('⚡ Creating automatic update triggers...');
+      await this.query(`
+        CREATE OR REPLACE FUNCTION update_updated_at_column()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = CURRENT_TIMESTAMP;
+            RETURN NEW;
+        END;
+        $$ language 'plpgsql';
+      `);
+      
+      await this.query(`
+        CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+      `);
+      
+      await this.query(`
+        CREATE TRIGGER update_clients_updated_at BEFORE UPDATE ON clients
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+      `);
+      console.log('✅ Update triggers created successfully');
+
       // Vérification des tables existantes
       const tables = await this.query(`
         SELECT table_name FROM information_schema.tables 
-        WHERE table_schema = 'public' AND table_name IN ('users', 'activity_logs')
+        WHERE table_schema = 'public' AND table_name IN ('users', 'clients', 'activity_logs', 'container_metrics')
         ORDER BY table_name
       `);
       console.log('📊 Tables found:', tables.rows);
@@ -142,11 +209,18 @@ class DatabaseService {
         }
       }
 
-      // Vérification finale
+      // Vérification finale complète
       const userCount = await this.query('SELECT COUNT(*) as count FROM users');
-      console.log(`📈 Total users in database: ${userCount.rows[0].count}`);
+      const clientCount = await this.query('SELECT COUNT(*) as count FROM clients');
       
-      console.log('🎉 Database initialization completed successfully!');
+      console.log(`📈 Database schema initialization COMPLETE:`);
+      console.log(`  - Users: ${userCount.rows[0].count}`);
+      console.log(`  - Clients: ${clientCount.rows[0].count}`); 
+      console.log(`  - Tables: ${tables.rows.length}/4 expected`);
+      console.log(`  - Indexes: Performance indexes created`);
+      console.log(`  - Triggers: Auto-update triggers active`);
+      
+      console.log('🎉 COMPLETE database schema initialization successful!');
     } catch (error: any) {
       console.error('❌ Database initialization failed:', error);
       console.error('Error details:', {

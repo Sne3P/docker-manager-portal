@@ -8,7 +8,7 @@ resource "azurerm_container_app" "backend" {
   template {
     container {
       name   = "backend"
-      image  = "${azurerm_container_registry.main.login_server}/dashboard-backend:latest"
+      image  = "${azurerm_container_registry.main.login_server}/dashboard-backend:unified-db"
       cpu    = 0.5
       memory = "1Gi"
 
