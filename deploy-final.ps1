@@ -21,6 +21,13 @@ if ($Clean) {
     Remove-Item .terraform*, terraform.tfstate*, tfplan* -Recurse -Force -ErrorAction SilentlyContinue
     Pop-Location
     Write-Host "Nettoye" -ForegroundColor Green
+} else {
+    # Nettoyage préventif des Container Apps existants pour éviter les conflits
+    Write-Host "Vérification et nettoyage préventif..." -ForegroundColor Yellow
+    $rgName = "rg-container-manager-$uniqueId"
+    az containerapp delete --name "backend-$uniqueId" --resource-group $rgName --yes --no-wait 2>$null | Out-Null
+    az containerapp delete --name "frontend-$uniqueId" --resource-group $rgName --yes --no-wait 2>$null | Out-Null
+    Start-Sleep 5
 }
 
 # Phase 1: Infrastructure seule
@@ -50,12 +57,10 @@ docker build -t "$acrServer/dashboard-backend:real-azure-msi" ./dashboard-backen
 Write-Host "  Poussée du backend..." -ForegroundColor White
 docker push "$acrServer/dashboard-backend:real-azure-msi"
 
-# Build and push frontend avec l'URL backend correcte
-Write-Host "  Construction du frontend avec URL API dynamique..." -ForegroundColor White
-$containerAppDomain = "delightfulflower-c37029b5.francecentral.azurecontainerapps.io"  # Domaine fixe Azure Container Apps
-$backendUrl = "https://backend-${uniqueId}.${containerAppDomain}/api"
-docker build --build-arg NEXT_PUBLIC_API_URL="$backendUrl" -t "$acrServer/dashboard-frontend:latest" ./dashboard-frontend
-Write-Host "  Poussée du frontend avec URL: $backendUrl" -ForegroundColor White
+# Build and push frontend (URL sera configurée après déploiement)
+Write-Host "  Construction du frontend..." -ForegroundColor White
+docker build -t "$acrServer/dashboard-frontend:latest" ./dashboard-frontend
+Write-Host "  Poussée du frontend..." -ForegroundColor White
 docker push "$acrServer/dashboard-frontend:latest"
 
 # Build and push application demo images
@@ -82,43 +87,28 @@ terraform plan -var="unique_id=$uniqueId" -out=tfplan2
 terraform apply -auto-approve tfplan2
 Pop-Location
 
-# Phase 3.1: Récupération FIABLE des URLs avec Azure CLI
-Write-Host "Récupération des URLs via Azure CLI..." -ForegroundColor White
-Start-Sleep 15
+# Phase 3.1: Récupération des URLs et rebuild frontend avec bonne URL API
+Write-Host "Récupération des URLs via Terraform outputs..." -ForegroundColor White
 
-$maxUrlRetries = 3
-$urlRetryCount = 0
-$urlsRetrieved = $false
+# Récupération directe des outputs Terraform (depuis le répertoire terraform/azure)
+Push-Location terraform\azure
+$outputs = terraform output -json | ConvertFrom-Json
+Pop-Location
+$backendUrl = $outputs.backend_url.value
+$frontendUrl = $outputs.frontend_url.value
 
-while (-not $urlsRetrieved -and $urlRetryCount -lt $maxUrlRetries) {
-    try {
-        $urlRetryCount++
-        Write-Host "  Tentative $urlRetryCount/$maxUrlRetries..." -ForegroundColor Gray
-        
-        $backendFqdn = az containerapp show --name "backend-$uniqueId" --resource-group $rgName --query "properties.configuration.ingress.fqdn" --output tsv 2>$null
-        $frontendFqdn = az containerapp show --name "frontend-$uniqueId" --resource-group $rgName --query "properties.configuration.ingress.fqdn" --output tsv 2>$null
-        
-        if ($backendFqdn -and $frontendFqdn -and $backendFqdn -ne "" -and $frontendFqdn -ne "") {
-            $backendUrl = "https://$backendFqdn"
-            $frontendUrl = "https://$frontendFqdn"
-            Write-Host "✓ URLs récupérées avec succès:" -ForegroundColor Green
-            Write-Host "  Backend:  $backendUrl" -ForegroundColor Gray
-            Write-Host "  Frontend: $frontendUrl" -ForegroundColor Gray
-            $urlsRetrieved = $true
-        } else {
-            throw "URLs vides ou non disponibles"
-        }
-    } catch {
-        Write-Host "  ⚠ Tentative $urlRetryCount échouée: $($_.Exception.Message)" -ForegroundColor Yellow
-        if ($urlRetryCount -lt $maxUrlRetries) {
-            Write-Host "  Attente avant nouvelle tentative..." -ForegroundColor Gray
-            Start-Sleep 10
-        }
-    }
-}
-
-if (-not $urlsRetrieved) {
-    Write-Host "❌ Impossible de récupérer les URLs après $maxUrlRetries tentatives" -ForegroundColor Red
+if ($backendUrl -and $frontendUrl) {
+    Write-Host "✓ URLs récupérées avec succès:" -ForegroundColor Green
+    Write-Host "  Backend:  $backendUrl" -ForegroundColor Gray
+    Write-Host "  Frontend: $frontendUrl" -ForegroundColor Gray
+    
+    # Rebuild frontend avec la bonne URL API maintenant qu'on la connaît
+    Write-Host "Reconstruction du frontend avec URL API correcte..." -ForegroundColor White
+    docker build --build-arg NEXT_PUBLIC_API_URL="$backendUrl/api" -t "$acrServer/dashboard-frontend:latest" ./dashboard-frontend
+    Write-Host "Poussée du frontend avec URL: $backendUrl/api" -ForegroundColor White
+    docker push "$acrServer/dashboard-frontend:latest"
+} else {
+    Write-Host "❌ Erreur: URLs non trouvées dans les outputs Terraform" -ForegroundColor Red
     $backendUrl = ""
     $frontendUrl = ""
 }
@@ -133,11 +123,12 @@ if ($backendUrl -and $frontendUrl) {
     az containerapp update --name "backend-$uniqueId" --resource-group $rgName `
         --set-env-vars "FRONTEND_URL=$frontendUrl" "NODE_ENV=production" 2>$null | Out-Null
         
-    # Configuration du frontend - NOTE: NEXT_PUBLIC_API_URL est maintenant défini au build-time
+    # Force mise à jour du container frontend avec nouvelle image
     az containerapp update --name "frontend-$uniqueId" --resource-group $rgName `
-        --set-env-vars "NODE_ENV=production" 2>$null | Out-Null
+        --image "$acrServer/dashboard-frontend:latest" `
+        --set-env-vars "NODE_ENV=production" "NEXT_PUBLIC_API_URL=$backendUrl/api" 2>$null | Out-Null
         
-    Write-Host "✓ Variables d'environnement configurées" -ForegroundColor Green
+    Write-Host "✓ Variables d'environnement configurées et containers mis à jour" -ForegroundColor Green
     
     # Attente du redémarrage
     Write-Host "Attente du redémarrage des containers..." -ForegroundColor White

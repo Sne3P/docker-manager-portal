@@ -112,6 +112,15 @@ resource "azurerm_container_app" "backend" {
   }
 }
 
+# Assignation des permissions au Managed Identity du backend
+resource "azurerm_role_assignment" "backend_contributor" {
+  scope                = azurerm_resource_group.main.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+
+  depends_on = [azurerm_container_app.backend]
+}
+
 resource "azurerm_container_app" "frontend" {
   name                         = "frontend-${var.unique_id}"
   container_app_environment_id = azurerm_container_app_environment.main.id

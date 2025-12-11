@@ -43,24 +43,27 @@ class AzureContainerService {
       // Authentification via Managed Service Identity si dans Azure
       if (process.env.AZURE_USE_MSI === 'true') {
         logger.info('Authenticating with Managed Service Identity...');
-        await this.runAzureCommand('az login --identity');
+        try {
+          await this.runAzureCommand('az login --identity');
+          // Se connecter au subscription spécifique
+          await this.runAzureCommand(`az account set --subscription ${this.subscription}`);
+          logger.info(`Azure subscription set to: ${this.subscription}`);
+        } catch (msiError: any) {
+          logger.warn(`MSI authentication failed: ${msiError.message}`);
+          logger.info('Continuing in limited mode without Azure permissions...');
+        }
       }
       
-      // Se connecter au subscription spécifique
-      await this.runAzureCommand(`az account set --subscription ${this.subscription}`);
-      logger.info(`Azure subscription set to: ${this.subscription}`);
-      
-      // Vérifier que le Container Apps extension est installé
+      // Vérifier que le Container Apps extension est installé (optionnel)
       try {
         await this.runAzureCommand('az containerapp --version');
       } catch (error) {
-        logger.info('Installing Azure Container Apps extension...');
-        await this.runAzureCommand('az extension add --name containerapp --upgrade');
+        logger.warn('Azure Container Apps extension not available - some features will be limited');
       }
       
     } catch (error: any) {
-      logger.error('Azure CLI setup failed:', error.message);
-      throw new Error('Azure CLI is required but not properly configured');
+      logger.warn(`Azure CLI setup issues: ${error.message}`);
+      logger.info('Continuing in local/limited mode...');
     }
   }
 
