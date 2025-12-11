@@ -37,12 +37,25 @@ terraform init -upgrade
 terraform plan -var="unique_id=$uniqueId" -out=tfplan
 terraform apply -auto-approve tfplan
 
-# Recuperation des infos
-$outputs = terraform output -json | ConvertFrom-Json
-$acrServer = $outputs.container_registry_login_server.value
-$acrName = $outputs.acr_name.value
-$rgName = $outputs.resource_group_name.value
+# Recuperation des infos avec gestion d'erreur
+try {
+    $outputs = terraform output -json | ConvertFrom-Json
+    $acrServer = $outputs.container_registry_login_server.value
+    $acrName = $outputs.acr_name.value
+    $rgName = $outputs.resource_group_name.value
+    Write-Host "✓ Outputs Terraform récupérés" -ForegroundColor Green
+} catch {
+    Write-Host "❌ Erreur lors de la récupération des outputs Terraform" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
 Pop-Location
+
+if (-not $acrServer -or -not $acrName -or -not $rgName) {
+    Write-Host "❌ Informations manquantes: ACR=$acrServer, Name=$acrName, RG=$rgName" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "Registry: $acrServer" -ForegroundColor Green
 Write-Host "Groupe: $rgName" -ForegroundColor Green
@@ -51,11 +64,11 @@ Write-Host "Groupe: $rgName" -ForegroundColor Green
 Write-Host "`nPhase 2: Construction COMPLÈTE de toutes les images..." -ForegroundColor Yellow
 az acr login --name $acrName
 
-# Build and push the real Azure integration backend
-Write-Host "  Construction du backend avec intégration Azure réelle..." -ForegroundColor White
-docker build -t "$acrServer/dashboard-backend:real-azure-msi" ./dashboard-backend
+# Build and push the Azure integration backend
+Write-Host "  Construction du backend avec intégration Azure..." -ForegroundColor White
+docker build -t "$acrServer/dashboard-backend:latest" ./dashboard-backend
 Write-Host "  Poussée du backend..." -ForegroundColor White
-docker push "$acrServer/dashboard-backend:real-azure-msi"
+docker push "$acrServer/dashboard-backend:latest"
 
 # Build and push frontend (URL sera configurée après déploiement)
 Write-Host "  Construction du frontend..." -ForegroundColor White
@@ -90,15 +103,43 @@ Pop-Location
 # Phase 3.1: Récupération des URLs et rebuild frontend avec bonne URL API
 Write-Host "Récupération des URLs via Terraform outputs..." -ForegroundColor White
 
-# Récupération directe des outputs Terraform (depuis le répertoire terraform/azure)
+# Attendre que les container apps soient complètement déployés
+Write-Host "Attente du déploiement des container apps..." -ForegroundColor Gray
+Start-Sleep 30
+
+# Récupération directe des outputs Terraform avec gestion d'erreur
 Push-Location terraform\azure
-$outputs = terraform output -json | ConvertFrom-Json
-Pop-Location
-$backendUrl = $outputs.backend_url.value
-$frontendUrl = $outputs.frontend_url.value
+try {
+    $outputs = terraform output -json | ConvertFrom-Json
+    $backendUrl = $outputs.backend_url.value
+    $frontendUrl = $outputs.frontend_url.value
+    Pop-Location
+    
+    if ($backendUrl -and $frontendUrl) {
+        Write-Host "✓ URLs récupérées avec succès via Terraform:" -ForegroundColor Green
+    } else {
+        throw "URLs vides dans les outputs"
+    }
+} catch {
+    Pop-Location
+    Write-Host "⚠ Erreur Terraform, récupération manuelle via Azure CLI..." -ForegroundColor Yellow
+    
+    # Fallback via Azure CLI
+    $backendFqdn = az containerapp show --name "backend-$uniqueId" --resource-group $rgName --query "properties.configuration.ingress.fqdn" -o tsv 2>$null
+    $frontendFqdn = az containerapp show --name "frontend-$uniqueId" --resource-group $rgName --query "properties.configuration.ingress.fqdn" -o tsv 2>$null
+    
+    if ($backendFqdn -and $frontendFqdn) {
+        $backendUrl = "https://$backendFqdn"
+        $frontendUrl = "https://$frontendFqdn"
+        Write-Host "✓ URLs récupérées avec succès via Azure CLI:" -ForegroundColor Green
+    } else {
+        Write-Host "❌ Impossible de récupérer les URLs" -ForegroundColor Red
+        $backendUrl = ""
+        $frontendUrl = ""
+    }
+}
 
 if ($backendUrl -and $frontendUrl) {
-    Write-Host "✓ URLs récupérées avec succès:" -ForegroundColor Green
     Write-Host "  Backend:  $backendUrl" -ForegroundColor Gray
     Write-Host "  Frontend: $frontendUrl" -ForegroundColor Gray
     
@@ -107,8 +148,40 @@ if ($backendUrl -and $frontendUrl) {
     docker build --build-arg NEXT_PUBLIC_API_URL="$backendUrl/api" -t "$acrServer/dashboard-frontend:latest" ./dashboard-frontend
     Write-Host "Poussée du frontend avec URL: $backendUrl/api" -ForegroundColor White
     docker push "$acrServer/dashboard-frontend:latest"
+    
+    # Force la mise à jour du container frontend avec la nouvelle image ET les variables d'environnement
+    Write-Host "Mise à jour du frontend avec nouvelle image et variables d'environnement..." -ForegroundColor White
+    az containerapp update --name "frontend-$uniqueId" --resource-group $rgName `
+        --image "$acrServer/dashboard-frontend:latest" `
+        --set-env-vars "NODE_ENV=production" "NEXT_PUBLIC_API_URL=$backendUrl/api" `
+        2>$null | Out-Null
+    
+    # Attendre que la nouvelle révision soit active
+    Write-Host "Attente de la nouvelle révision frontend..." -ForegroundColor Gray
+    Start-Sleep 30
+    
+    # Vérifier que la nouvelle révision est active
+    $maxRetries = 10
+    $retryCount = 0
+    $revisionActive = $false
+    
+    while (-not $revisionActive -and $retryCount -lt $maxRetries) {
+        $retryCount++
+        $latestRevision = az containerapp revision list --name "frontend-$uniqueId" --resource-group $rgName --query "[0]" | ConvertFrom-Json 2>$null
+        if ($latestRevision -and $latestRevision.properties.trafficWeight -eq 100) {
+            $revisionActive = $true
+            Write-Host "✓ Nouvelle révision active: $($latestRevision.name)" -ForegroundColor Green
+        } else {
+            Write-Host "  Attente révision $retryCount/$maxRetries..." -ForegroundColor Gray
+            Start-Sleep 10
+        }
+    }
+    
+    if (-not $revisionActive) {
+        Write-Host "⚠ Timeout: révision pas encore active, mais continuons..." -ForegroundColor Yellow
+    }
 } else {
-    Write-Host "❌ Erreur: URLs non trouvées dans les outputs Terraform" -ForegroundColor Red
+    Write-Host "❌ Erreur: URLs non trouvées, le frontend utilisera localhost en fallback" -ForegroundColor Red
     $backendUrl = ""
     $frontendUrl = ""
 }
@@ -117,22 +190,16 @@ if ($backendUrl -and $frontendUrl) {
 Write-Host "`nPhase 4: Configuration CORS et variables..." -ForegroundColor Yellow
 
 if ($backendUrl -and $frontendUrl) {
-    Write-Host "Configuration CORS pour la production..." -ForegroundColor White
+    Write-Host "Configuration CORS backend..." -ForegroundColor White
     
-    # Configuration du backend avec FRONTEND_URL pour CORS
+    # Configuration du backend avec FRONTEND_URL pour CORS uniquement
     az containerapp update --name "backend-$uniqueId" --resource-group $rgName `
-        --set-env-vars "FRONTEND_URL=$frontendUrl" "NODE_ENV=production" 2>$null | Out-Null
+        --set-env-vars "FRONTEND_URL=$frontendUrl" 2>$null | Out-Null
         
-    # Force mise à jour du container frontend avec nouvelle image
-    az containerapp update --name "frontend-$uniqueId" --resource-group $rgName `
-        --image "$acrServer/dashboard-frontend:latest" `
-        --set-env-vars "NODE_ENV=production" "NEXT_PUBLIC_API_URL=$backendUrl/api" 2>$null | Out-Null
-        
-    Write-Host "✓ Variables d'environnement configurées et containers mis à jour" -ForegroundColor Green
+    Write-Host "✓ Configuration CORS appliquée" -ForegroundColor Green
     
-    # Attente du redémarrage
-    Write-Host "Attente du redémarrage des containers..." -ForegroundColor White
-    Start-Sleep 45
+    # Attente courte pour la configuration CORS
+    Start-Sleep 10
 }
 
 # Phase 6: Initialisation COMPLÈTE de la base de données (UNIFIED)
@@ -141,20 +208,39 @@ Write-Host "`nPhase 6: Initialisation unifiée de la base de données..." -Foreg
 if ($backendUrl) {
     Write-Host "Initialisation du schéma complet via endpoint unifié..." -ForegroundColor White
     
-    $maxRetries = 5
-    $retryCount = 0
-    $dbInitialized = $false
+    # Attendre que le backend soit prêt
+    $maxHealthRetries = 10
+    $healthRetry = 0
+    $backendReady = $false
     
-    while (-not $dbInitialized -and $retryCount -lt $maxRetries) {
+    while (-not $backendReady -and $healthRetry -lt $maxHealthRetries) {
+        $healthRetry++
         try {
-            $retryCount++
-            Write-Host "  Tentative $retryCount/$maxRetries..." -ForegroundColor Gray
-            
-            # Test de santé d'abord
-            $healthCheck = Invoke-RestMethod "$backendUrl/api/health" -Method GET -TimeoutSec 15
-            
-            # Initialisation COMPLÈTE via endpoint unifié (maintenant équivalent à init.sql)
-            $dbInit = Invoke-RestMethod "$backendUrl/api/database/init-database" -Method POST -TimeoutSec 45
+            Write-Host "  Test de santé $healthRetry/$maxHealthRetries..." -ForegroundColor Gray
+            $healthCheck = Invoke-RestMethod "$backendUrl/api/health" -Method GET -TimeoutSec 10
+            if ($healthCheck.success) {
+                $backendReady = $true
+                Write-Host "✓ Backend prêt" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "  Backend en cours de démarrage, attente 15s..." -ForegroundColor Gray
+            Start-Sleep 15
+        }
+    }
+    
+    if ($backendReady) {
+        Write-Host "Initialisation de la base de données..." -ForegroundColor White
+        $maxRetries = 3
+        $retryCount = 0
+        $dbInitialized = $false
+        
+        while (-not $dbInitialized -and $retryCount -lt $maxRetries) {
+            try {
+                $retryCount++
+                Write-Host "  Tentative d'initialisation $retryCount/$maxRetries..." -ForegroundColor Gray
+                
+                # Initialisation COMPLÈTE via endpoint unifié (maintenant équivalent à init.sql)
+                $dbInit = Invoke-RestMethod "$backendUrl/api/database/init-database" -Method POST -TimeoutSec 45
             
             if ($dbInit.success) {
                 Write-Host "✓ Schéma de base de données COMPLET initialisé" -ForegroundColor Green
@@ -180,6 +266,10 @@ if ($backendUrl) {
         Write-Host "❌ Échec de l'initialisation de la DB après $maxRetries tentatives" -ForegroundColor Red
         Write-Host "   Vous devrez initialiser manuellement via: $backendUrl/api/database/init-database" -ForegroundColor Yellow
     }
+} else {
+    Write-Host "❌ Backend non accessible après $maxHealthRetries tentatives" -ForegroundColor Red
+    Write-Host "⚠ Initialisez manuellement la DB via: $backendUrl/api/database/init-database" -ForegroundColor Yellow
+}
 } else {
     Write-Host "❌ URL backend manquante, initialisation DB impossible" -ForegroundColor Red
 }
