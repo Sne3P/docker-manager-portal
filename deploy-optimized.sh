@@ -673,39 +673,34 @@ fi
 # ÉTAPE 5C: Vérification et initialisation de la base de données
 log "Vérification de l'état d'initialisation de la base de données..."
 
-# Test d'abord si la DB est déjà initialisée avec un simple GET
-DB_STATUS=$(curl -sf "$BACKEND_URL/api/health" 2>/dev/null || echo "{}")
+# Tentative d'initialisation directe - si ça échoue avec "already exists" c'est que c'est déjà init
+log "Test d'initialisation de la base de données..."
+DB_INIT_SUCCESS=false
 
-if echo "$DB_STATUS" | grep -q '"database".*"connected"' && echo "$DB_STATUS" | grep -q '"success".*true' 2>/dev/null; then
-    # DB déjà connectée et fonctionnelle
-    DB_INIT_SUCCESS=true
-    success "✅ Base de données déjà initialisée et opérationnelle"
-else
-    # Tentative d'initialisation nécessaire
-    log "Initialisation de la base de données requise..."
-    DB_INIT_SUCCESS=false
+for i in {1..3}; do
+    log "  Tentative d'initialisation $i/3..."
     
-    for i in {1..3}; do
-        log "  Tentative d'initialisation $i/3..."
-        
-        INIT_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/health/init-db" 2>/dev/null || echo "{}")
-        
-        if echo "$INIT_RESPONSE" | grep -q '"success".*true' 2>/dev/null; then
-            DB_INIT_SUCCESS=true
-            success "✅ Base de données initialisée avec succès"
-            break
-        elif echo "$INIT_RESPONSE" | grep -q "already exists" 2>/dev/null; then
-            DB_INIT_SUCCESS=true
-            success "✅ Base de données déjà initialisée (détectée lors de l'initialisation)"
-            break
-        else
-            warn "Tentative $i/3 échouée, nouvelle tentative dans 15s..."
-            if [ $i -lt 3 ]; then
-                sleep 15
-            fi
+    INIT_RESPONSE=$(curl -s -X POST "$BACKEND_URL/api/health/init-db" 2>/dev/null || echo "{}")
+    
+    if echo "$INIT_RESPONSE" | grep -q '"success".*true' 2>/dev/null; then
+        DB_INIT_SUCCESS=true
+        success "✅ Base de données initialisée avec succès"
+        break
+    elif echo "$INIT_RESPONSE" | grep -q "already exists" 2>/dev/null; then
+        DB_INIT_SUCCESS=true
+        success "✅ Base de données déjà initialisée (trigger/tables existent)"
+        break
+    elif echo "$INIT_RESPONSE" | grep -q '"message".*"trigger.*already exists"' 2>/dev/null; then
+        DB_INIT_SUCCESS=true
+        success "✅ Base de données déjà initialisée (triggers existants)"
+        break
+    else
+        warn "Tentative $i/3 échouée, nouvelle tentative dans 15s..."
+        if [ $i -lt 3 ]; then
+            sleep 15
         fi
-    done
-fi
+    fi
+done
 
 # Vérification finale
 if [ "$DB_INIT_SUCCESS" = true ]; then
