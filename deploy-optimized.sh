@@ -163,13 +163,20 @@ EOF
                 ;;
         esac
         
-        # Vérification avec les différents noms possibles
+        # Vérification avec les différents noms possibles et configuration du PATH
         if command -v terraform &> /dev/null; then
             success "Terraform installé avec succès ($(terraform version | head -n1))"
         elif command -v terraform.exe &> /dev/null; then
             # Créer un alias terraform pour terraform.exe
             ln -sf "$(which terraform.exe)" "/tmp/terraform/terraform" 2>/dev/null || true
+            # S'assurer que terraform est accessible
+            export PATH="/tmp/terraform:$PATH"
             success "Terraform installé avec succès ($(terraform.exe version | head -n1))"
+        elif [ -f "/tmp/terraform/terraform.exe" ]; then
+            # Terraform téléchargé mais pas dans le PATH
+            ln -sf "/tmp/terraform/terraform.exe" "/tmp/terraform/terraform" 2>/dev/null || true
+            export PATH="/tmp/terraform:$PATH"
+            success "Terraform configuré depuis /tmp/terraform"
         else
             warn "Installation Terraform échouée - tentative alternative..."
             # Essayer d'utiliser Chocolatey sur Windows
@@ -190,25 +197,103 @@ EOF
         log "Installation d'Azure CLI..."
         case $SYSTEM in
             "windows")
-                warn "Azure CLI non trouvé. Installé manuellement depuis: https://aka.ms/installazurecliwindows"
-                warn "Ou utilisez: winget install Microsoft.AzureCLI"
+                log "Tentative d'installation automatique d'Azure CLI sur Windows..."
+                
+                # Essayer winget d'abord (Windows 10+ moderne)
+                if command -v winget.exe &> /dev/null; then
+                    log "Installation via winget..."
+                    winget.exe install Microsoft.AzureCLI --silent --accept-source-agreements --accept-package-agreements 2>/dev/null || {
+                        warn "Installation winget échouée, essai avec PowerShell..."
+                        
+                        # Fallback: installation via PowerShell et MSI
+                        powershell.exe -Command "
+                            try {
+                                Write-Host 'Téléchargement Azure CLI MSI...'
+                                \$ProgressPreference = 'SilentlyContinue'
+                                Invoke-WebRequest -Uri 'https://aka.ms/installazurecliwindows' -OutFile '\$env:TEMP\\azure-cli.msi'
+                                Write-Host 'Installation Azure CLI...'
+                                Start-Process msiexec.exe -Wait -ArgumentList '/i', '\$env:TEMP\\azure-cli.msi', '/quiet', '/norestart'
+                                Remove-Item '\$env:TEMP\\azure-cli.msi' -Force -ErrorAction SilentlyContinue
+                                Write-Host 'Azure CLI installé avec succès'
+                            } catch {
+                                Write-Error \"Erreur d'installation: \$(\$_.Exception.Message)\"
+                            }
+                        " || warn "Installation PowerShell échouée"
+                    }
+                else
+                    # Fallback direct avec PowerShell
+                    log "Installation via PowerShell (MSI)..."
+                    powershell.exe -Command "
+                        try {
+                            Write-Host 'Téléchargement Azure CLI MSI...'
+                            \$ProgressPreference = 'SilentlyContinue'
+                            Invoke-WebRequest -Uri 'https://aka.ms/installazurecliwindows' -OutFile '\$env:TEMP\\azure-cli.msi'
+                            Write-Host 'Installation Azure CLI...'
+                            Start-Process msiexec.exe -Wait -ArgumentList '/i', '\$env:TEMP\\azure-cli.msi', '/quiet', '/norestart'
+                            Remove-Item '\$env:TEMP\\azure-cli.msi' -Force -ErrorAction SilentlyContinue
+                            Write-Host 'Azure CLI installé avec succès'
+                        } catch {
+                            Write-Error \"Erreur d'installation: \$(\$_.Exception.Message)\"
+                        }
+                    "
+                fi
+                
+                # Recharger le PATH pour détecter az
+                export PATH="/c/Program Files (x86)/Microsoft SDKs/Azure/CLI2/wbin:$PATH"
+                export PATH="/c/Program Files/Microsoft SDKs/Azure/CLI2/wbin:$PATH"
                 ;;
             "linux")
-                curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+                log "Installation Azure CLI sur Linux..."
+                if command -v apt-get &> /dev/null; then
+                    # Ubuntu/Debian
+                    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+                elif command -v yum &> /dev/null; then
+                    # RHEL/CentOS
+                    sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
+                    sudo sh -c 'echo -e "[azure-cli]
+name=Azure CLI
+baseurl=https://packages.microsoft.com/yumrepos/azure-cli
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/azure-cli.repo'
+                    sudo yum install azure-cli
+                elif command -v dnf &> /dev/null; then
+                    # Fedora
+                    sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
+                    sudo dnf install -y azure-cli
+                else
+                    # Fallback: installation manuelle via curl
+                    curl -L https://aka.ms/InstallAzureCli | bash
+                fi
                 ;;
             "macos")
                 if command -v brew &> /dev/null; then
+                    log "Installation Azure CLI via Homebrew..."
                     brew install azure-cli
                 else
+                    log "Installation Azure CLI via script..."
                     curl -L https://aka.ms/InstallAzureCli | bash
                 fi
                 ;;
         esac
+        
+        # Vérification post-installation
+        if command -v az &> /dev/null; then
+            success "Azure CLI installé avec succès ($(az version --query '"azure-cli"' -o tsv 2>/dev/null || echo 'version inconnue'))"
+        else
+            warn "Installation automatique échouée. Installez manuellement:"
+            case $SYSTEM in
+                "windows") warn "  https://aka.ms/installazurecliwindows" ;;
+                "linux") warn "  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash" ;;
+                "macos") warn "  brew install azure-cli" ;;
+            esac
+            error "Azure CLI est requis pour continuer"
+        fi
     else
         success "Azure CLI déjà installé ($(az version --query '"azure-cli"' -o tsv 2>/dev/null || echo 'version inconnue'))"
     fi
     
-    # Vérification Docker
+    # Vérification et démarrage automatique de Docker
     if ! command -v docker &> /dev/null; then
         warn "Docker non trouvé. Installation requise:"
         case $SYSTEM in
@@ -218,10 +303,181 @@ EOF
         esac
         error "Docker est requis pour continuer"
     else
-        success "Docker déjà installé ($(docker --version))"
+        success "Docker installé ($(docker --version))"
+        
+        # Vérifier si Docker daemon est en cours d'exécution
+        log "Vérification du daemon Docker..."
+        if ! docker ps &> /dev/null; then
+            warn "Docker daemon non accessible, tentative de démarrage..."
+            
+            case $SYSTEM in
+                "windows")
+                    log "Démarrage de Docker Desktop sur Windows..."
+                    
+                    # Méthode 1: Vérifier et démarrer via chemins directs
+                    DOCKER_STARTED=false
+                    
+                    # Chemins possibles pour Docker Desktop
+                    DOCKER_PATHS=(
+                        "/c/Program Files/Docker/Docker/Docker Desktop.exe"
+                        "/c/Users/$USER/AppData/Local/Programs/Docker/Docker/Docker Desktop.exe"
+                        "$LOCALAPPDATA/Programs/Docker/Docker/Docker Desktop.exe"
+                    )
+                    
+                    for docker_path in "${DOCKER_PATHS[@]}"; do
+                        if [ -f "$docker_path" ]; then
+                            log "Docker Desktop trouvé: $docker_path"
+                            log "Lancement de Docker Desktop..."
+                            
+                            # Démarrer Docker Desktop en arrière-plan
+                            nohup "$docker_path" > /dev/null 2>&1 &
+                            DOCKER_STARTED=true
+                            success "Docker Desktop lancé"
+                            break
+                        fi
+                    done
+                    
+                    # Méthode 2: Via PowerShell si path direct échoue
+                    if [ "$DOCKER_STARTED" != true ]; then
+                        log "Tentative via PowerShell..."
+                        powershell.exe -Command "
+                            try {
+                                \$dockerExe = Get-ChildItem -Path '\$env:ProgramFiles\\Docker\\Docker', '\$env:LOCALAPPDATA\\Programs\\Docker\\Docker' -Name 'Docker Desktop.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                                if (\$dockerExe) {
+                                    \$fullPath = \$dockerExe.FullName
+                                    Start-Process \$fullPath -WindowStyle Hidden
+                                    Write-Host \"Docker Desktop lancé: \$fullPath\"
+                                } else {
+                                    Write-Host \"Docker Desktop non trouvé dans les chemins standards\"
+                                }
+                            } catch {
+                                Write-Warning \"Erreur: \$(\$_.Exception.Message)\"
+                            }
+                        " && DOCKER_STARTED=true
+                    fi
+                    
+                    # Méthode 3: Via cmd start
+                    if [ "$DOCKER_STARTED" != true ]; then
+                        log "Tentative via cmd start..."
+                        cmd.exe //c "start \"\" \"Docker Desktop\"" 2>/dev/null && DOCKER_STARTED=true
+                    fi
+                    
+                    if [ "$DOCKER_STARTED" != true ]; then
+                        error "❌ Impossible de démarrer Docker Desktop automatiquement"
+                        warn "Veuillez démarrer Docker Desktop manuellement et relancer le script"
+                        exit 1
+                    fi
+                    ;;
+                "linux")
+                    log "Démarrage du service Docker sur Linux..."
+                    sudo systemctl start docker 2>/dev/null || {
+                        sudo service docker start 2>/dev/null || {
+                            warn "Impossible de démarrer Docker automatiquement"
+                            warn "Lancez manuellement: sudo systemctl start docker"
+                        }
+                    }
+                    ;;
+                "macos")
+                    log "Démarrage de Docker Desktop sur macOS..."
+                    open -a "Docker Desktop" 2>/dev/null || {
+                        open "/Applications/Docker.app" 2>/dev/null || {
+                            warn "Impossible de démarrer Docker Desktop"
+                            warn "Lancez manuellement Docker Desktop"
+                        }
+                    }
+                    ;;
+            esac
+            
+            # Attendre que Docker soit prêt
+            log "Attente du démarrage de Docker (max 2 minutes)..."
+            DOCKER_READY=false
+            MAX_DOCKER_WAIT=24  # 24 * 5s = 2 minutes
+            DOCKER_WAIT_COUNT=0
+            
+            while [ $DOCKER_WAIT_COUNT -lt $MAX_DOCKER_WAIT ] && [ "$DOCKER_READY" != true ]; do
+                DOCKER_WAIT_COUNT=$((DOCKER_WAIT_COUNT + 1))
+                
+                if docker ps &> /dev/null; then
+                    DOCKER_READY=true
+                    success "✅ Docker daemon opérationnel"
+                    break
+                else
+                    log "  Docker en cours de démarrage... $DOCKER_WAIT_COUNT/$MAX_DOCKER_WAIT (5s)"
+                    sleep 5
+                fi
+            done
+            
+            if [ "$DOCKER_READY" != true ]; then
+                warn "⚠️ Docker daemon pas encore prêt après 2 minutes"
+                warn "Actions possibles:"
+                warn "1. Attendez encore un peu (Docker Desktop peut être lent)"
+                warn "2. Vérifiez l'icône Docker dans la barre des tâches"
+                warn "3. Ouvrez Docker Desktop manuellement si nécessaire"
+                
+                echo
+                echo "Voulez-vous continuer à attendre ? [Y/n]"
+                read -r CONTINUE_WAIT
+                
+                if [ "$CONTINUE_WAIT" = "n" ] || [ "$CONTINUE_WAIT" = "N" ]; then
+                    error "❌ Arrêt du script. Relancez après avoir démarré Docker"
+                    exit 1
+                else
+                    log "Attente supplémentaire de Docker (1 minute)..."
+                    MAX_DOCKER_WAIT=12  # 1 minute de plus
+                    DOCKER_WAIT_COUNT=0
+                    
+                    while [ $DOCKER_WAIT_COUNT -lt $MAX_DOCKER_WAIT ] && [ "$DOCKER_READY" != true ]; do
+                        DOCKER_WAIT_COUNT=$((DOCKER_WAIT_COUNT + 1))
+                        
+                        if docker ps &> /dev/null; then
+                            DOCKER_READY=true
+                            success "✅ Docker daemon maintenant opérationnel!"
+                            break
+                        else
+                            log "  Attente Docker... $DOCKER_WAIT_COUNT/$MAX_DOCKER_WAIT (5s)"
+                            sleep 5
+                        fi
+                    done
+                    
+                    if [ "$DOCKER_READY" != true ]; then
+                        error "❌ Docker toujours inaccessible. Vérifications manuelles requises:"
+                        warn "• Docker Desktop est-il installé ?"
+                        warn "• L'icône Docker est-elle visible dans la barre des tâches ?"
+                        warn "• Essayez: docker --version && docker ps"
+                        exit 1
+                    fi
+                fi
+            fi
+        else
+            success "✅ Docker daemon opérationnel"
+        fi
     fi
     
     success "✅ Toutes les dépendances sont prêtes"
+}
+
+# Fonction pour s'assurer que Terraform est accessible
+ensure_terraform() {
+    if command -v terraform &> /dev/null; then
+        return 0
+    elif command -v terraform.exe &> /dev/null; then
+        # Créer un alias si nécessaire
+        if [ ! -f "/tmp/terraform/terraform" ]; then
+            ln -sf "$(which terraform.exe)" "/tmp/terraform/terraform" 2>/dev/null || true
+        fi
+        export PATH="/tmp/terraform:$PATH"
+        return 0
+    elif [ -f "/tmp/terraform/terraform.exe" ]; then
+        # Utiliser la version téléchargée
+        if [ ! -f "/tmp/terraform/terraform" ]; then
+            ln -sf "/tmp/terraform/terraform.exe" "/tmp/terraform/terraform" 2>/dev/null || true
+        fi
+        export PATH="/tmp/terraform:$PATH"
+        return 0
+    else
+        error "Terraform non accessible. Vérifiez l'installation."
+        return 1
+    fi
 }
 
 # Parse arguments
@@ -268,6 +524,59 @@ RG_NAME="rg-container-manager-$UNIQUE_ID"
 success "ID unique: $UNIQUE_ID | Subscription: $SUBSCRIPTION_ID"
 
 # ===========================
+# PHASE 0.5: VÉRIFICATION ET ENREGISTREMENT DES PROVIDERS AZURE
+# ===========================
+log "Vérification des providers Azure requis..."
+
+# Liste des providers requis pour ce déploiement
+REQUIRED_PROVIDERS=(
+    "Microsoft.App"
+    "Microsoft.ContainerRegistry" 
+    "Microsoft.ContainerService"
+    "Microsoft.OperationalInsights"
+    "Microsoft.DBforPostgreSQL"
+)
+
+# Vérification et enregistrement automatique des providers
+for provider in "${REQUIRED_PROVIDERS[@]}"; do
+    log "Vérification du provider $provider..."
+    
+    # Vérifier le statut du provider
+    PROVIDER_STATUS=$(az provider show --namespace "$provider" --query "registrationState" -o tsv 2>/dev/null || echo "NotFound")
+    
+    if [ "$PROVIDER_STATUS" != "Registered" ]; then
+        warn "Provider $provider non enregistré (statut: $PROVIDER_STATUS)"
+        log "Enregistrement du provider $provider..."
+        
+        # Enregistrer le provider
+        az provider register --namespace "$provider" --wait 2>/dev/null || {
+            warn "Impossible d'enregistrer automatiquement $provider"
+            warn "Enregistrement en arrière-plan..."
+            az provider register --namespace "$provider" 2>/dev/null || true
+        }
+        
+        # Vérifier le nouveau statut
+        NEW_STATUS=$(az provider show --namespace "$provider" --query "registrationState" -o tsv 2>/dev/null || echo "Unknown")
+        if [ "$NEW_STATUS" = "Registered" ]; then
+            success "Provider $provider enregistré avec succès"
+        elif [ "$NEW_STATUS" = "Registering" ]; then
+            warn "Provider $provider en cours d'enregistrement..."
+            success "L'enregistrement se poursuivra en arrière-plan"
+        else
+            warn "Statut du provider $provider: $NEW_STATUS"
+        fi
+    else
+        success "Provider $provider déjà enregistré"
+    fi
+done
+
+# Attendre un peu pour laisser les providers s'enregistrer
+log "Attente de la finalisation des enregistrements (10s)..."
+sleep 10
+
+success "✅ Vérification des providers terminée"
+
+# ===========================
 # PHASE 1: CLEANUP (IF REQUESTED)
 # ===========================
 if [ "$CLEAN" = true ]; then
@@ -295,6 +604,9 @@ log "Phase 2: Infrastructure Terraform"
 
 cd terraform/azure
 
+# S'assurer que Terraform est accessible
+ensure_terraform
+
 # Initialize Terraform (only if needed)
 if [ ! -d ".terraform" ]; then
     log "Initialisation Terraform..."
@@ -308,30 +620,34 @@ if az group show --name "$RG_NAME" &>/dev/null; then
     BACKEND_EXISTS=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || echo "null")
     FRONTEND_EXISTS=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || echo "null")
     
-    if [ "$BACKEND_EXISTS" != "null" ] && ! terraform state list | grep -q "azurerm_container_app.backend"; then
+    # Vérifier l'état actuel de Terraform (sans demander les variables)
+    TERRAFORM_STATE=$(terraform state list 2>/dev/null || echo "")
+    
+    if [ "$BACKEND_EXISTS" != "null" ] && ! echo "$TERRAFORM_STATE" | grep -q "azurerm_container_app.backend"; then
         warn "Import backend existant dans l'état Terraform"
         BACKEND_ID=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "id" -o tsv 2>/dev/null)
         if [ -n "$BACKEND_ID" ]; then
-            terraform import "azurerm_container_app.backend" "$BACKEND_ID" 2>/dev/null || true
+            terraform import -var="unique_id=$UNIQUE_ID" "azurerm_container_app.backend" "$BACKEND_ID" 2>/dev/null || true
         fi
     fi
     
-    if [ "$FRONTEND_EXISTS" != "null" ] && ! terraform state list | grep -q "azurerm_container_app.frontend"; then
+    if [ "$FRONTEND_EXISTS" != "null" ] && ! echo "$TERRAFORM_STATE" | grep -q "azurerm_container_app.frontend"; then
         warn "Import frontend existant dans l'état Terraform"
         FRONTEND_ID=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "id" -o tsv 2>/dev/null)
         if [ -n "$FRONTEND_ID" ]; then
-            terraform import "azurerm_container_app.frontend" "$FRONTEND_ID" 2>/dev/null || true
+            terraform import -var="unique_id=$UNIQUE_ID" "azurerm_container_app.frontend" "$FRONTEND_ID" 2>/dev/null || true
         fi
     fi
 fi
 
-# Plan and apply in one go
-log "Déploiement infrastructure..."
-terraform plan -var="unique_id=$UNIQUE_ID" -out=tfplan
-terraform apply -auto-approve tfplan
+# Première étape: déployer seulement l'infrastructure de base (sans Container Apps)
+log "Déploiement infrastructure de base (Registry + Database)..."
+ensure_terraform
+terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_resource_group.main" -target="azurerm_container_registry.main" -target="azurerm_log_analytics_workspace.main" -target="azurerm_postgresql_flexible_server.main" -target="azurerm_postgresql_flexible_server_database.main" -target="azurerm_postgresql_flexible_server_firewall_rule.allow_azure" -target="random_password.postgres_password" -target="random_password.jwt_secret" -out=tfplan-infra
+terraform apply -auto-approve tfplan-infra
 
-# Get outputs (sans jq)
-log "Récupération des informations Terraform..."
+# Get outputs pour ACR
+log "Récupération des informations ACR..."
 ACR_SERVER=$(terraform output -raw container_registry_login_server 2>/dev/null)
 ACR_NAME=$(terraform output -raw acr_name 2>/dev/null)
 DB_URL=$(terraform output -raw database_url 2>/dev/null)
@@ -339,65 +655,89 @@ DB_URL=$(terraform output -raw database_url 2>/dev/null)
 cd ../..
 
 if [ -z "$ACR_SERVER" ] || [ -z "$ACR_NAME" ]; then
-    error "Impossible de récupérer les informations Terraform"
+    error "Impossible de récupérer les informations ACR depuis Terraform"
 fi
 
-success "Infrastructure créée: $ACR_SERVER"
+success "Infrastructure de base créée: $ACR_SERVER"
 
 # ===========================
-# PHASE 3: DOCKER IMAGES BUILD & PUSH (ORDRE CRITIQUE CORRIGÉ)
+# PHASE 3: DOCKER IMAGES BUILD & PUSH (AVANT CONTAINER APPS)
 # ===========================
 if [ "$SKIP_BUILD" != true ]; then
-    log "Phase 3: Construction des images Docker (ordre corrigé)"
+    log "Phase 3: Construction et push des images Docker AVANT Container Apps"
     
     # Login to ACR
+    log "Connexion à Azure Container Registry..."
     az acr login --name "$ACR_NAME"
     
-    # ÉTAPE 3A: Build Backend (SANS push - Container Apps pas encore prêts)
-    log "  📦 Backend (build local)..."
+    # Build et push Backend
+    log "  📦 Construction Backend..."
     docker build -t "$ACR_SERVER/dashboard-backend:latest" ./dashboard-backend
-    success "Backend build terminé (pas encore pushé)"
+    log "  📤 Push Backend vers ACR..."
+    docker push "$ACR_SERVER/dashboard-backend:latest"
+    success "✅ Backend construit et poussé"
     
-    # ÉTAPE 3B: Vérification DYNAMIQUE que les Container Apps existent
-    log "Vérification que les Container Apps sont créés par Terraform..."
-    CONTAINER_APPS_READY=false
-    MAX_WAIT_ATTEMPTS=5
-    WAIT_ATTEMPT=0
+    # Build et push Frontend (image temporaire pour permettre le déploiement)
+    log "  📦 Construction Frontend temporaire..."
+    docker build -t "$ACR_SERVER/dashboard-frontend:latest" ./dashboard-frontend
+    log "  📤 Push Frontend temporaire vers ACR..."
+    docker push "$ACR_SERVER/dashboard-frontend:latest"
+    success "✅ Frontend temporaire construit et poussé"
     
-    while [ $WAIT_ATTEMPT -lt $MAX_WAIT_ATTEMPTS ] && [ "$CONTAINER_APPS_READY" != true ]; do
-        WAIT_ATTEMPT=$((WAIT_ATTEMPT + 1))
-        log "  Vérification Container Apps $WAIT_ATTEMPT/$MAX_WAIT_ATTEMPTS..."
-        
-        # Vérifier existence des deux Container Apps
-        BACKEND_EXISTS=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound")
-        FRONTEND_EXISTS=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound")
-        
-        # Nettoyer les espaces et caractères cachés
-        BACKEND_EXISTS=$(echo "$BACKEND_EXISTS" | tr -d '\r\n\t ' | tr -d '[:space:]')
-        FRONTEND_EXISTS=$(echo "$FRONTEND_EXISTS" | tr -d '\r\n\t ' | tr -d '[:space:]')
-        
-        # Debug: afficher les valeurs exactes
-        log "    Debug: Backend='$BACKEND_EXISTS' (longueur: ${#BACKEND_EXISTS})"
-        log "    Debug: Frontend='$FRONTEND_EXISTS' (longueur: ${#FRONTEND_EXISTS})"
-        
-        if [ "$BACKEND_EXISTS" != "NotFound" ] && [ "$FRONTEND_EXISTS" != "NotFound" ] && [ -n "$BACKEND_EXISTS" ] && [ -n "$FRONTEND_EXISTS" ]; then
-            if [ "$BACKEND_EXISTS" = "Succeeded" ] && [ "$FRONTEND_EXISTS" = "Succeeded" ]; then
-                CONTAINER_APPS_READY=true
-                success "✅ Container Apps créés et prêts (Backend: $BACKEND_EXISTS, Frontend: $FRONTEND_EXISTS)"
-            else
-                log "    Container Apps en cours de création (Backend: $BACKEND_EXISTS, Frontend: $FRONTEND_EXISTS)..."
-                sleep 15
-            fi
-        else
-            log "    Container Apps pas encore créés (Backend: $BACKEND_EXISTS, Frontend: $FRONTEND_EXISTS), attente 15s..."
-            sleep 15
-        fi
-    done
+else
+    warn "Construction Docker ignorée (--skip-build)"
+fi
+
+# ===========================
+# PHASE 4: DÉPLOIEMENT CONTAINER APPS (MAINTENANT QUE LES IMAGES EXISTENT)
+# ===========================
+log "Phase 4: Déploiement Container Apps avec images existantes"
+
+cd terraform/azure
+
+log "Déploiement des Container Apps..."
+ensure_terraform
+terraform plan -var="unique_id=$UNIQUE_ID" -out=tfplan-apps
+terraform apply -auto-approve tfplan-apps
+
+# Get outputs finaux
+log "Récupération des URLs finales..."
+BACKEND_URL=$(terraform output -raw backend_url 2>/dev/null)
+FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null)
+
+cd ../..
+
+if [ -z "$BACKEND_URL" ] || [ -z "$FRONTEND_URL" ]; then
+    # Fallback Azure CLI
+    log "Récupération des URLs via Azure CLI..."
+    BACKEND_FQDN=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
+    FRONTEND_FQDN=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
     
-    if [ "$CONTAINER_APPS_READY" != true ]; then
-        error "❌ TIMEOUT: Container Apps non créés après $MAX_WAIT_ATTEMPTS tentatives"
-        exit 1
+    if [ -n "$BACKEND_FQDN" ]; then
+        BACKEND_URL="https://$BACKEND_FQDN"
     fi
+    if [ -n "$FRONTEND_FQDN" ]; then
+        FRONTEND_URL="https://$FRONTEND_FQDN"
+    fi
+fi
+
+success "✅ Container Apps déployés avec succès"
+success "   Backend: $BACKEND_URL"
+success "   Frontend: $FRONTEND_URL"
+
+# ===========================
+# PHASE 5: REBUILD FRONTEND AVEC L'API URL CORRECTE
+# ===========================
+if [ "$SKIP_BUILD" != true ] && [ -n "$BACKEND_URL" ]; then
+    log "Phase 5: Reconstruction du Frontend avec l'API URL correcte"
+    
+    # ÉTAPE 5A: Attendre que les Container Apps soient bien déployés
+    log "Attente que les Container Apps soient opérationnels..."
+    sleep 20
+    
+    # ÉTAPE 5B: Build Frontend avec la bonne API URL
+    log "  📦 Reconstruction Frontend avec API URL correcte: $BACKEND_URL/api"
+    docker build --build-arg NEXT_PUBLIC_API_URL="$BACKEND_URL/api" -t "$ACR_SERVER/dashboard-frontend:latest" ./dashboard-frontend
     
     # ÉTAPE 3C: Maintenant on peut PUSH le backend en sécurité
     log "  📤 Push Backend vers ACR (Container Apps prêts)..."
@@ -466,14 +806,60 @@ if [ "$SKIP_BUILD" != true ]; then
     fi
     
     # ÉTAPE 3D: Build Frontend avec la bonne API URL
-    log "  📦 Frontend avec API URL correcte: $BACKEND_URL/api"
+    log "  📦 Reconstruction Frontend avec API URL correcte: $BACKEND_URL/api"
     docker build --build-arg NEXT_PUBLIC_API_URL="$BACKEND_URL/api" -t "$ACR_SERVER/dashboard-frontend:latest" ./dashboard-frontend
-    docker push "$ACR_SERVER/dashboard-frontend:latest"
-    success "Frontend pushed avec NEXT_PUBLIC_API_URL=$BACKEND_URL/api"
     
-    # ÉTAPE 3E: Build Images Démo en parallèle (moins critique)
-    log "  📦 Images démo (en parallèle)..."
+    # ÉTAPE 5B: Push de la nouvelle version Frontend
+    log "  📤 Push Frontend mis à jour vers ACR..."
+    docker push "$ACR_SERVER/dashboard-frontend:latest"
+    success "✅ Frontend mis à jour et poussé avec l'API URL correcte"
+    
+    # ÉTAPE 5C: Redémarrage des Container Apps pour utiliser les nouvelles images
+    log "  🔄 Redémarrage des Container Apps pour appliquer les mises à jour..."
+    az containerapp revision restart --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || true
+    az containerapp revision restart --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || true
+    success "✅ Container Apps redémarrés"
+    
+else
+    success "✅ Déploiement terminé (reconstruction Frontend ignorée)"
+fi
+
+# ===========================
+# PHASE 6: VÉRIFICATIONS FINALES ET RÉSUMÉ
+# ===========================
+log "Phase 6: Vérifications finales"
+
+# Attendre que les applications soient prêtes
+log "Attente du démarrage des applications (30s)..."
+sleep 30
+
+# Test de connectivité final
+log "Test de connectivité des applications..."
+if [ -n "$BACKEND_URL" ]; then
+    if curl -sf --connect-timeout 10 --max-time 15 "$BACKEND_URL/api/health" >/dev/null 2>&1; then
+        success "✅ Backend accessible: $BACKEND_URL/api/health"
+    else
+        warn "⚠ Backend pas encore prêt: $BACKEND_URL/api/health"
+    fi
+fi
+
+if [ -n "$FRONTEND_URL" ]; then
+    if curl -sf --connect-timeout 10 --max-time 15 "$FRONTEND_URL" >/dev/null 2>&1; then
+        success "✅ Frontend accessible: $FRONTEND_URL"
+    else
+        warn "⚠ Frontend pas encore prêt: $FRONTEND_URL"
+    fi
+fi
+
+# ===========================
+# PHASE 7: IMAGES DÉMO (OPTIONNEL)
+# ===========================
+if [ "$SKIP_BUILD" != true ]; then
+    log "Phase 7: Construction des images démo (en parallèle)"
+    
+    # Build images démo en arrière-plan pour accélérer
     {
+        log "  📦 Image Node.js démo..."
         docker build -t "$ACR_SERVER/nodejs-demo:latest" ./docker-images/nodejs-demo
         docker push "$ACR_SERVER/nodejs-demo:latest"
     } &
