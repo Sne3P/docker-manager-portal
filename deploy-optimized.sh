@@ -175,163 +175,116 @@ fi
 success "Infrastructure de base créée: $ACR_SERVER"
 
 # ===========================
-# PHASE 3: DOCKER IMAGES BUILD & PUSH (AVANT CONTAINER APPS)
+# PHASE 3: BACKEND BUILD & DEPLOY (OPTIMISÉ)
 # ===========================
 if [ "$SKIP_BUILD" != true ]; then
-    log "Phase 3: Construction et push des images Docker AVANT Container Apps"
+    log "Phase 3: Construction Backend seulement"
     
     # Login to ACR
     log "Connexion à Azure Container Registry..."
     az acr login --name "$ACR_NAME"
     
-    # Build et push Backend
+    # Build et push Backend uniquement
     log "  📦 Construction Backend..."
     docker build -t "$ACR_SERVER/dashboard-backend:latest" ./dashboard-backend
     log "  📤 Push Backend vers ACR..."
     docker push "$ACR_SERVER/dashboard-backend:latest"
     success "✅ Backend construit et poussé"
     
-    # Build et push Frontend (image temporaire pour permettre le déploiement)
-    log "  📦 Construction Frontend temporaire..."
-    docker build -t "$ACR_SERVER/dashboard-frontend:latest" ./dashboard-frontend
-    log "  📤 Push Frontend temporaire vers ACR..."
-    docker push "$ACR_SERVER/dashboard-frontend:latest"
-    success "✅ Frontend temporaire construit et poussé"
-    
 else
     warn "Construction Docker ignorée (--skip-build)"
 fi
 
 # ===========================
-# PHASE 4: DÉPLOIEMENT CONTAINER APPS (MAINTENANT QUE LES IMAGES EXISTENT)
+# PHASE 4: DÉPLOIEMENT BACKEND CONTAINER APP
 # ===========================
-log "Phase 4: Déploiement Container Apps avec images existantes"
+log "Phase 4: Déploiement Backend Container App"
 
 cd terraform/azure
 
-log "Déploiement des Container Apps..."
-terraform plan -var="unique_id=$UNIQUE_ID" -out=tfplan-apps
-terraform apply -auto-approve tfplan-apps
+log "Déploiement du Backend Container App..."
+terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_container_app_environment.main" -target="azurerm_container_app.backend" -out=tfplan-backend
+terraform apply -auto-approve tfplan-backend
 
-# Get outputs finaux
-log "Récupération des URLs finales..."
+# Récupération de l'URL Backend seulement
+log "Récupération de l'URL Backend..."
 BACKEND_URL=$(terraform output -raw backend_url 2>/dev/null)
-FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null)
 
 cd ../..
 
-if [ -z "$BACKEND_URL" ] || [ -z "$FRONTEND_URL" ]; then
+if [ -z "$BACKEND_URL" ]; then
     # Fallback Azure CLI
-    log "Récupération des URLs via Azure CLI..."
+    log "Récupération de l'URL Backend via Azure CLI..."
     BACKEND_FQDN=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
-    FRONTEND_FQDN=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
     
     if [ -n "$BACKEND_FQDN" ]; then
         BACKEND_URL="https://$BACKEND_FQDN"
     fi
-    if [ -n "$FRONTEND_FQDN" ]; then
-        FRONTEND_URL="https://$FRONTEND_FQDN"
-    fi
 fi
 
-success "✅ Container Apps déployés avec succès"
+if [ -z "$BACKEND_URL" ]; then
+    error "❌ Impossible de récupérer l'URL du Backend"
+fi
+
+success "✅ Backend déployé avec succès"
 success "   Backend: $BACKEND_URL"
-success "   Frontend: $FRONTEND_URL"
 
 # ===========================
-# PHASE 5: REBUILD FRONTEND AVEC L'API URL CORRECTE
+# PHASE 5: BUILD ET DÉPLOIEMENT FRONTEND AVEC URL CORRECTE
 # ===========================
 if [ "$SKIP_BUILD" != true ] && [ -n "$BACKEND_URL" ]; then
-    log "Phase 5: Reconstruction du Frontend avec l'API URL correcte"
+    log "Phase 5: Build et déploiement Frontend avec l'API URL correcte"
     
-    # ÉTAPE 5A: Attendre que les Container Apps soient bien déployés
-    log "Attente que les Container Apps soient opérationnels..."
-    sleep 20
+    # Attendre que le Backend soit opérationnel
+    log "Attente que le Backend soit opérationnel..."
+    sleep 15
     
-    # ÉTAPE 5B: Build Frontend avec la bonne API URL
-    log "  📦 Reconstruction Frontend avec API URL correcte: $BACKEND_URL/api"
+    # Build Frontend avec l'API URL correcte
+    log "  📦 Build Frontend avec API URL: $BACKEND_URL/api"
     docker build --build-arg NEXT_PUBLIC_API_URL="$BACKEND_URL/api" -t "$ACR_SERVER/dashboard-frontend:latest" ./dashboard-frontend
+    log "  📤 Push Frontend vers ACR..."
+    docker push "$ACR_SERVER/dashboard-frontend:latest"
+    success "✅ Frontend construit et poussé avec l'API URL correcte"
     
-    # ÉTAPE 3C: Maintenant on peut PUSH le backend en sécurité
-    log "  📤 Push Backend vers ACR (Container Apps prêts)..."
-    docker push "$ACR_SERVER/dashboard-backend:latest"
-    success "✅ Backend pushé avec succès"
+    # Déploiement du Frontend Container App
+    log "  🚀 Déploiement Frontend Container App..."
+    cd terraform/azure
+    terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_container_app.frontend" -out=tfplan-frontend
+    terraform apply -auto-approve tfplan-frontend
     
-    # ÉTAPE 3D: Récupération INTELLIGENTE des URLs finales avec retry dynamique
-    log "Récupération intelligente des URLs des Container Apps..."
+    # Récupération URL Frontend
+    FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null)
+    cd ../..
     
-    URLS_RETRIEVED=false
-    MAX_URL_ATTEMPTS=3
-    URL_ATTEMPT=0
-    
-    while [ $URL_ATTEMPT -lt $MAX_URL_ATTEMPTS ] && [ "$URLS_RETRIEVED" != true ]; do
-        URL_ATTEMPT=$((URL_ATTEMPT + 1))
-        log "  Tentative récupération URLs $URL_ATTEMPT/$MAX_URL_ATTEMPTS..."
-        
-        # Méthode 1: Terraform outputs (plus fiable)
-        cd terraform/azure
-        BACKEND_URL=$(terraform output -raw backend_url 2>/dev/null || echo "")
-        FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
-        cd ../..
-        
-        # Méthode 2: Azure CLI si Terraform échoue
-        if [ -z "$BACKEND_URL" ] || [ -z "$FRONTEND_URL" ]; then
-            log "    Terraform outputs vides, essai Azure CLI..."
-            BACKEND_FQDN=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "")
-            FRONTEND_FQDN=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "")
-            
-            if [ -n "$BACKEND_FQDN" ] && [ -n "$FRONTEND_FQDN" ]; then
-                BACKEND_URL="https://$BACKEND_FQDN"
-                FRONTEND_URL="https://$FRONTEND_FQDN"
-            fi
+    if [ -z "$FRONTEND_URL" ]; then
+        FRONTEND_FQDN=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
+        if [ -n "$FRONTEND_FQDN" ]; then
+            FRONTEND_URL="https://$FRONTEND_FQDN"
         fi
-        
-        # Vérification des URLs (suffisant si elles existent)
-        if [ -n "$BACKEND_URL" ] && [ -n "$FRONTEND_URL" ]; then
-            log "    URLs trouvées, test de connectivité optionnel..."
-            
-            # Test rapide de connectivité (non bloquant)
-            if curl -sf --connect-timeout 3 --max-time 5 "${BACKEND_URL%/}" >/dev/null 2>&1 || 
-               curl -sf --connect-timeout 3 --max-time 5 "$BACKEND_URL/api/health" >/dev/null 2>&1; then
-                URLS_RETRIEVED=true
-                success "✅ URLs récupérées et immédiatement accessibles"
-                success "   Backend: $BACKEND_URL | Frontend: $FRONTEND_URL"
-            else
-                # URLs récupérées = Container Apps créés, même si pas encore prêts à servir
-                log "    URLs récupérées (Container Apps créés). Applications en cours de démarrage..."
-                URLS_RETRIEVED=true
-                success "✅ Container Apps déployés avec succès"
-                success "   Backend: $BACKEND_URL | Frontend: $FRONTEND_URL"
-                warn "   💡 Les applications peuvent mettre quelques minutes à démarrer complètement"
-            fi
-        else
-            log "    URLs pas encore disponibles, attente 20s..."
-            sleep 20
-        fi
-    done
-    
-    # Vérification finale critique
-    if [ "$URLS_RETRIEVED" != true ] || [ -z "$BACKEND_URL" ] || [ -z "$FRONTEND_URL" ]; then
-        error "❌ ÉCHEC CRITIQUE: Impossible de récupérer les URLs après $MAX_URL_ATTEMPTS tentatives"
-        warn "   Vérifiez manuellement les Container Apps dans le portail Azure"
-        warn "   Resource Group: $RG_NAME"
-        exit 1
     fi
     
-    # ÉTAPE 3D: Build Frontend avec la bonne API URL
-    log "  📦 Reconstruction Frontend avec API URL correcte: $BACKEND_URL/api"
-    docker build --build-arg NEXT_PUBLIC_API_URL="$BACKEND_URL/api" -t "$ACR_SERVER/dashboard-frontend:latest" ./dashboard-frontend
+    success "✅ Frontend déployé avec succès"
+    success "   Frontend: $FRONTEND_URL"
     
-    # ÉTAPE 5B: Push de la nouvelle version Frontend
-    log "  📤 Push Frontend mis à jour vers ACR..."
-    docker push "$ACR_SERVER/dashboard-frontend:latest"
-    success "✅ Frontend mis à jour et poussé avec l'API URL correcte"
+    # Déploiement du Frontend Container App
+    log "  🚀 Déploiement Frontend Container App..."
+    cd terraform/azure
+    terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_container_app.frontend" -out=tfplan-frontend
+    terraform apply -auto-approve tfplan-frontend
     
-    # ÉTAPE 5C: Redémarrage des Container Apps pour utiliser les nouvelles images
-    log "  🔄 Redémarrage des Container Apps pour appliquer les mises à jour..."
-    az containerapp revision restart --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || true
-    az containerapp revision restart --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || true
-    success "✅ Container Apps redémarrés"
+    # Récupération URL Frontend
+    FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null)
+    cd ../..
+    
+    if [ -z "$FRONTEND_URL" ]; then
+        FRONTEND_FQDN=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
+        if [ -n "$FRONTEND_FQDN" ]; then
+            FRONTEND_URL="https://$FRONTEND_FQDN"
+        fi
+    fi
+    
+    success "✅ Frontend déployé avec succès"
+    success "   Frontend: $FRONTEND_URL"
     
 else
     success "✅ Déploiement terminé (reconstruction Frontend ignorée)"
