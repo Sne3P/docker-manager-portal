@@ -21,6 +21,31 @@ success() { echo -e "${GREEN}✓${NC} $1"; }
 warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 error() { echo -e "${RED}❌${NC} $1"; exit 1; }
 
+# Generic wait function (shared with main script)
+wait_for_condition() {
+    local description="$1"
+    local test_command="$2"
+    local max_attempts="${3:-20}"
+    local sleep_time="${4:-15}"
+    local attempt=1
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if eval "$test_command" &>/dev/null; then
+            success "✅ $description - OK"
+            return 0
+        fi
+        
+        if [[ $attempt -lt $max_attempts ]]; then
+            log "  Attente $description $attempt/$max_attempts (${sleep_time}s)..."
+            sleep "$sleep_time"
+        fi
+        
+        ((attempt++))
+    done
+    
+    return 1  # Failed
+}
+
 # =============================================================
 # SYSTEM DETECTION
 # =============================================================
@@ -207,22 +232,10 @@ ensure_docker() {
             ;;
     esac
     
-    # Wait for Docker to be ready
-    local max_wait=24  # 2 minutes
-    local wait_count=0
-    
-    while [[ $wait_count -lt $max_wait ]]; do
-        if docker ps &>/dev/null; then
-            success "Docker daemon maintenant opérationnel"
-            return 0
-        fi
-        
-        ((wait_count++))
-        log "  Attente Docker $wait_count/$max_wait (5s)..."
-        sleep 5
-    done
-    
-    error "Docker daemon inaccessible après 2 minutes. Démarrez Docker manuellement."
+    # Wait for Docker using generic function (optimized)
+    if ! wait_for_condition "Docker daemon opérationnel" "docker ps" 24 5; then
+        error "Docker daemon inaccessible après 2 minutes. Démarrez Docker manuellement."
+    fi
 }
 
 # =============================================================
@@ -244,24 +257,19 @@ setup_azure() {
     success "Connecté à Azure: $user_name"
     success "Subscription: $subscription_id"
     
-    # Register required Azure providers
+    # Register required Azure providers (optimized - batch check)
     log "Vérification des providers Azure..."
-    local providers=(
-        "Microsoft.App"
-        "Microsoft.ContainerRegistry" 
-        "Microsoft.ContainerService"
-        "Microsoft.OperationalInsights"
-        "Microsoft.DBforPostgreSQL"
-    )
+    local providers=("Microsoft.App" "Microsoft.ContainerRegistry" "Microsoft.ContainerService" "Microsoft.OperationalInsights" "Microsoft.DBforPostgreSQL")
+    
+    # Get all provider statuses in one call (optimized)
+    local provider_states=$(az provider list --query "[?namespace=='Microsoft.App' || namespace=='Microsoft.ContainerRegistry' || namespace=='Microsoft.ContainerService' || namespace=='Microsoft.OperationalInsights' || namespace=='Microsoft.DBforPostgreSQL'].{namespace:namespace,state:registrationState}" -o tsv 2>/dev/null)
     
     for provider in "${providers[@]}"; do
-        local status=$(az provider show --namespace "$provider" --query "registrationState" -o tsv 2>/dev/null || echo "NotFound")
-        
-        if [[ "$status" == "Registered" ]]; then
+        if echo "$provider_states" | grep -q "$provider.*Registered" 2>/dev/null; then
             success "Provider $provider déjà enregistré"
         else
-            log "Enregistrement du provider $provider (statut: $status)..."
-            az provider register --namespace "$provider" 2>/dev/null || true
+            log "Enregistrement du provider $provider..."
+            az provider register --namespace "$provider" --no-wait 2>/dev/null || true
         fi
     done
     

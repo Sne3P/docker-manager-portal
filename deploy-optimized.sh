@@ -22,6 +22,37 @@ warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 error() { echo -e "${RED}❌${NC} $1"; exit 1; }
 
 # =============================================================
+# GENERIC WAIT FUNCTION FOR CONDITIONS
+# =============================================================
+wait_for_condition() {
+    local description="$1"
+    local test_command="$2"
+    local max_attempts="${3:-20}"
+    local sleep_time="${4:-15}"
+    local attempt=1
+    
+    log "Attente: $description (max $max_attempts tentatives)..."
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        log "  Tentative $attempt/$max_attempts..."
+        
+        if eval "$test_command" &>/dev/null; then
+            success "✅ $description - OK"
+            return 0
+        fi
+        
+        if [[ $attempt -lt $max_attempts ]]; then
+            log "    Attente ${sleep_time}s avant nouvelle tentative..."
+            sleep "$sleep_time"
+        fi
+        
+        ((attempt++))
+    done
+    
+    error "❌ Timeout: $description après $max_attempts tentatives"
+}
+
+# =============================================================
 # PREREQUISITES SETUP (DELEGATED TO EXTERNAL SCRIPT)
 # =============================================================
 setup_prerequisites() {
@@ -110,9 +141,11 @@ if [ "$CLEAN" = true ]; then
     
     success "Nettoyage lancé (asynchrone)"
     
-    # Wait a bit for resources to start deleting
-    log "Attente du nettoyage (60s)..."
-    sleep 60
+    # Wait smartly for cleanup to start (optimized)
+    log "Attente intelligente du nettoyage..."
+    wait_for_condition "Nettoyage des ressources" \
+        "! az group show -n '$RG_NAME' >/dev/null 2>&1 || [ \$(az resource list -g '$RG_NAME' --query 'length(@)' -o tsv 2>/dev/null || echo 10) -lt 5 ]" \
+        12 5 || log "Nettoyage en cours, continuons..."
 fi
 
 # ===========================
@@ -235,9 +268,11 @@ success "   Backend: $BACKEND_URL"
 if [ "$SKIP_BUILD" != true ] && [ -n "$BACKEND_URL" ]; then
     log "Phase 5: Build et déploiement Frontend avec l'API URL correcte"
     
-    # Attendre que le Backend soit opérationnel
-    log "Attente que le Backend soit opérationnel..."
-    sleep 15
+    # Attendre que le Backend soit opérationnel (optimisé)
+    log "Vérification que le Backend est opérationnel..."
+    wait_for_condition "Backend prêt pour frontend" \
+        "curl -sf --connect-timeout 3 '$BACKEND_URL/api/health'" \
+        5 3 || warn "Backend pas encore prêt, build frontend quand même..."
     
     # Build Frontend avec l'API URL correcte
     log "  📦 Build Frontend avec API URL: $BACKEND_URL/api"
@@ -295,9 +330,11 @@ fi
 # ===========================
 log "Phase 6: Vérifications finales"
 
-# Attendre que les applications soient prêtes
-log "Attente du démarrage des applications (30s)..."
-sleep 30
+# Attendre que les applications soient prêtes (optimisé)
+log "Vérification du démarrage des applications..."
+wait_for_condition "Applications démarrées" \
+    "curl -sf --connect-timeout 3 '$BACKEND_URL/api/health' && curl -sf --connect-timeout 3 '$FRONTEND_URL' >/dev/null" \
+    10 3 || log "Applications en cours de démarrage..."
 
 # Test de connectivité final
 log "Test de connectivité des applications..."
@@ -436,24 +473,13 @@ if [ -n "$BACKEND_URL" ] && [ -n "$FRONTEND_URL" ]; then
         log "Redémarrage backend pour appliquer MSI + CORS..."
         az containerapp revision restart --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --revision "$BACKEND_REVISION" 2>/dev/null || true
         
-        # Attente DYNAMIQUE que le backend redémarre
+        # Attente DYNAMIQUE que le backend redémarre (optimisée)
         log "Attente du redémarrage backend..."
-        BACKEND_RESTARTED=false
-        for i in {1..15}; do  # Max 5 minutes
-            # Test direct de santé - plus fiable que le status de révision
-            if curl -sf --connect-timeout 3 --max-time 8 "$BACKEND_URL/api/health" >/dev/null 2>&1; then
-                BACKEND_RESTARTED=true
-                success "✅ Backend redémarré et opérationnel (health check réussi)"
-                break
-            else
-                # Vérifier le statut de l'app comme backup
-                APP_STATUS=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.runningStatus" -o tsv 2>/dev/null || echo "Unknown")
-                log "  Backend redémarrage en cours (Status: $APP_STATUS) $i/15 (20s)..."
-            fi
-            sleep 20
-        done
         
-        if [ "$BACKEND_RESTARTED" != true ]; then
+        # Utiliser la fonction générique avec fallback silencieux
+        if ! wait_for_condition "Backend redémarrage" \
+            "curl -sf --connect-timeout 3 --max-time 8 '$BACKEND_URL/api/health'" \
+            15 20 2>/dev/null; then
             warn "⚠️ Timeout redémarrage backend, continuons quand même..."
         fi
     fi
@@ -470,97 +496,40 @@ log "Phase 5: Initialisation complète de la base de données"
 
 # ÉTAPE 5A: Attente que le backend soit complètement opérationnel
 log "Attente que le backend soit prêt avec la nouvelle configuration..."
-MAX_RETRIES=30
-RETRY_COUNT=0
-BACKEND_READY=false
+[[ -z "$BACKEND_URL" ]] && error "Backend URL manquante"
 
-while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$BACKEND_READY" != true ]; do
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    log "  Test de santé backend $RETRY_COUNT/$MAX_RETRIES..."
-    
-    if [ -n "$BACKEND_URL" ]; then
-        # Test de l'endpoint health
-        HEALTH_RESPONSE=$(curl -sf "$BACKEND_URL/api/health" 2>/dev/null || echo "")
-        if echo "$HEALTH_RESPONSE" | grep -q '"success".*true' 2>/dev/null; then
-            BACKEND_READY=true
-            success "✅ Backend opérationnel avec API fonctionnelle"
-        else
-            log "    Backend en cours de démarrage, attente 15s..."
-            sleep 15
-        fi
-    else
-        error "Backend URL manquante"
-        exit 1
-    fi
-done
-
-if [ "$BACKEND_READY" != true ]; then
-    error "❌ Timeout: Backend non accessible après $MAX_RETRIES tentatives"
-    exit 1
-fi
+# Utilisation de la fonction générique optimisée
+wait_for_condition "Backend API opérationnel" \
+    "curl -sf '$BACKEND_URL/api/health' | grep -q '\"success\".*true'" \
+    20 15
 
 # ÉTAPE 5B: Vérification de la connexion à la base de données
 log "Vérification de la connexion à la base de données PostgreSQL..."
-DB_CONNECTION_OK=false
 
-for i in {1..5}; do
-    log "  Test connexion DB $i/5..."
-    DB_STATUS=$(curl -sf "$BACKEND_URL/api/health/db-status" 2>/dev/null || echo "{}")
-    
-    if echo "$DB_STATUS" | grep -q '"success".*true' && echo "$DB_STATUS" | grep -q '"connected".*true' 2>/dev/null; then
-        DB_CONNECTION_OK=true
-        success "✅ Connexion PostgreSQL OK"
-        break
-    else
-        warn "Connexion DB échouée, attente 10s..."
-        sleep 10
-    fi
-done
+# Connexion DB avec fonction générique optimisée
+wait_for_condition "Connexion PostgreSQL" \
+    "curl -sf '$BACKEND_URL/api/health/db-status' | grep -q '\"success\".*true' && curl -sf '$BACKEND_URL/api/health/db-status' | grep -q '\"connected\".*true'" \
+    5 10
 
-if [ "$DB_CONNECTION_OK" != true ]; then
-    error "❌ Impossible de se connecter à PostgreSQL"
-    exit 1
-fi
+# ÉTAPE 5C: Initialisation de la base de données (optimisée)
+log "Initialisation de la base de données..."
 
-# ÉTAPE 5C: Vérification et initialisation de la base de données
-log "Vérification de l'état d'initialisation de la base de données..."
+# Test d'initialisation avec logique simplifiée
+INIT_RESPONSE=$(curl -s -X POST "$BACKEND_URL/api/health/init-db" 2>/dev/null || echo "{}")
 
-# Tentative d'initialisation directe - si ça échoue avec "already exists" c'est que c'est déjà init
-log "Test d'initialisation de la base de données..."
-DB_INIT_SUCCESS=false
-
-for i in {1..3}; do
-    log "  Tentative d'initialisation $i/3..."
-    
+if echo "$INIT_RESPONSE" | grep -q -E '"success".*true|already exists|trigger.*already exists' 2>/dev/null; then
+    success "✅ Base de données initialisée et opérationnelle"
+else
+    # Une seule retry rapide si première tentative échoue (optimisé)
+    warn "Première tentative échouée, retry immédiat..."
+    sleep 3
     INIT_RESPONSE=$(curl -s -X POST "$BACKEND_URL/api/health/init-db" 2>/dev/null || echo "{}")
     
-    if echo "$INIT_RESPONSE" | grep -q '"success".*true' 2>/dev/null; then
-        DB_INIT_SUCCESS=true
-        success "✅ Base de données initialisée avec succès"
-        break
-    elif echo "$INIT_RESPONSE" | grep -q "already exists" 2>/dev/null; then
-        DB_INIT_SUCCESS=true
-        success "✅ Base de données déjà initialisée (trigger/tables existent)"
-        break
-    elif echo "$INIT_RESPONSE" | grep -q '"message".*"trigger.*already exists"' 2>/dev/null; then
-        DB_INIT_SUCCESS=true
-        success "✅ Base de données déjà initialisée (triggers existants)"
-        break
+    if echo "$INIT_RESPONSE" | grep -q -E '"success".*true|already exists|trigger.*already exists' 2>/dev/null; then
+        success "✅ Base de données initialisée après retry"
     else
-        warn "Tentative $i/3 échouée, nouvelle tentative dans 15s..."
-        if [ $i -lt 3 ]; then
-            sleep 15
-        fi
+        error "❌ Échec initialisation DB. Manuel: curl -X POST $BACKEND_URL/api/health/init-db"
     fi
-done
-
-# Vérification finale
-if [ "$DB_INIT_SUCCESS" = true ]; then
-    success "✅ Base de données opérationnelle et prête"
-else
-    error "❌ Échec de l'initialisation DB après 3 tentatives"
-    warn "Initialisation manuelle requise: curl -X POST $BACKEND_URL/api/health/init-db"
-    exit 1
 fi
 
 # ÉTAPE 5D: Vérification des utilisateurs de test
