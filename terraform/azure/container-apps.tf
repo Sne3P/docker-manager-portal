@@ -13,8 +13,8 @@ resource "azurerm_container_app" "backend" {
     container {
       name   = "backend"
       image  = "${azurerm_container_registry.main.login_server}/dashboard-backend:latest"
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 0.25
+      memory = "0.5Gi"
 
       env {
         name  = "NODE_ENV"
@@ -131,8 +131,8 @@ resource "azurerm_container_app" "frontend" {
     container {
       name   = "frontend"
       image  = "${azurerm_container_registry.main.login_server}/dashboard-frontend:latest"
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 0.25
+      memory = "0.5Gi"
 
       env {
         name  = "NODE_ENV"

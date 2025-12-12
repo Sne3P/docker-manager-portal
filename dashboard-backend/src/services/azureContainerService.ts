@@ -143,11 +143,8 @@ class AzureContainerService {
         networks: ['default']
       }));
 
-      // Si aucun container n'existe pour ce client, créer des containers de démo
-      if (containers.length === 0 && clientId) {
-        const demoContainers = await this.createDemoContainers(clientId);
-        containers.push(...demoContainers);
-      }
+      // Les containers sont créés uniquement à la demande de l'utilisateur
+      // Pas de containers démo automatiques
 
       logger.info(`Found ${containers.length} containers for client ${clientId}`);
       return containers;

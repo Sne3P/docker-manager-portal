@@ -4,9 +4,9 @@ FROM node:18-alpine AS deps
 # Install dependencies only when needed
 WORKDIR /app
 COPY package*.json ./
-RUN npm install && npm cache clean --force
+RUN npm ci --silent && npm cache clean --force
 
-# Rebuild source code when needed
+# Rebuild source code when needed  
 FROM node:18-alpine AS builder
 WORKDIR /app
 

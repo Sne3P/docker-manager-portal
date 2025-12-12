@@ -78,7 +78,7 @@ resource "azurerm_container_registry" "main" {
   }
 }
 
-# Log Analytics Workspace
+# Log Analytics Workspace (optimisé pour dev/test)
 resource "azurerm_log_analytics_workspace" "main" {
   name                = "logs-${var.unique_id}"
   location            = azurerm_resource_group.main.location
@@ -105,7 +105,7 @@ resource "azurerm_container_app_environment" "main" {
   }
 }
 
-# PostgreSQL Flexible Server pour la base de données
+# PostgreSQL Flexible Server pour la base de données (optimisé pour dev/test)
 resource "azurerm_postgresql_flexible_server" "main" {
   name                = "postgres-${var.unique_id}"
   resource_group_name = azurerm_resource_group.main.name
@@ -115,11 +115,15 @@ resource "azurerm_postgresql_flexible_server" "main" {
   administrator_login    = "postgres"
   administrator_password = random_password.postgres_password.result
 
-  zone                        = "1"
   storage_mb                  = 32768
   sku_name                    = "B_Standard_B1ms"
   backup_retention_days       = 7
   geo_redundant_backup_enabled = false
+
+  # Ignorer les changements de zone pour éviter les erreurs de mise à jour
+  lifecycle {
+    ignore_changes = [zone]
+  }
 
   tags = {
     Environment = "production"
@@ -135,20 +139,12 @@ resource "azurerm_postgresql_flexible_server_database" "main" {
   collation = "en_US.utf8"
 }
 
-# Règle firewall pour permettre l'accès depuis Azure
+# Règle firewall pour permettre l'accès depuis Azure seulement
 resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure" {
   name             = "AllowAzureServices"
   server_id        = azurerm_postgresql_flexible_server.main.id
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
-}
-
-# Règle firewall pour permettre l'accès externe (pour les tests)
-resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_all" {
-  name             = "AllowAll"
-  server_id        = azurerm_postgresql_flexible_server.main.id
-  start_ip_address = "0.0.0.0"
-  end_ip_address   = "255.255.255.255"
 }
 
 # Outputs pour récupérer les informations importantes
