@@ -22,463 +22,47 @@ warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 error() { echo -e "${RED}❌${NC} $1"; exit 1; }
 
 # =============================================================
-# INSTALLATION AUTOMATIQUE DES DEPENDANCES
+# PREREQUISITES SETUP (DELEGATED TO EXTERNAL SCRIPT)
 # =============================================================
-install_dependencies() {
-    log "🔧 Vérification et installation des dépendances..."
+setup_prerequisites() {
+    log "🔧 Configuration des prérequis..."
     
-    # Détection du système
-    if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ -n "$WSL_DISTRO_NAME" ]]; then
-        SYSTEM="windows"
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        SYSTEM="linux"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        SYSTEM="macos"
-    else
-        SYSTEM="unknown"
+    # Check if setup script exists
+    if [[ ! -f "./setup-prerequisites.sh" ]]; then
+        error "Script setup-prerequisites.sh non trouvé dans le répertoire courant"
     fi
     
-    log "Système détecté: $SYSTEM"
+    # Make it executable and run it
+    chmod +x ./setup-prerequisites.sh
     
-    # Installation JQ
-    if ! command -v jq &> /dev/null; then
-        log "Installation de jq..."
-        case $SYSTEM in
-            "windows")
-                # Windows/WSL - utiliser curl pour télécharger jq
-                if command -v curl &> /dev/null; then
-                    curl -L https://github.com/stedolan/jq/releases/download/jq-1.6/jq-win64.exe -o /tmp/jq.exe 2>/dev/null
-                    chmod +x /tmp/jq.exe
-                    export PATH="/tmp:$PATH"
-                    # Alternative: utiliser PowerShell en fallback
-                    if ! command -v jq &> /dev/null; then
-                        cat > /tmp/jq << 'EOF'
-#!/bin/bash
-# Fallback jq using PowerShell
-powershell.exe -Command "
-$input | ConvertFrom-Json | ConvertTo-Json -Depth 10 -Compress:$false
-" 2>/dev/null || echo "$1"
-EOF
-                        chmod +x /tmp/jq
-                    fi
-                else
-                    # Fallback PowerShell-based jq
-                    cat > /tmp/jq << 'EOF'
-#!/bin/bash
-powershell.exe -Command "\$json=\$args[0]; if(\$json) { (\$json | ConvertFrom-Json).\$(\$args[1] -replace '\..*','') } else { Get-Content /dev/stdin | ConvertFrom-Json | ConvertTo-Json -Depth 10 }" -- "$@"
-EOF
-                    chmod +x /tmp/jq
-                    export PATH="/tmp:$PATH"
-                fi
-                ;;
-            "linux")
-                if command -v apt-get &> /dev/null; then
-                    sudo apt-get update && sudo apt-get install -y jq
-                elif command -v yum &> /dev/null; then
-                    sudo yum install -y jq
-                elif command -v dnf &> /dev/null; then
-                    sudo dnf install -y jq
-                fi
-                ;;
-            "macos")
-                if command -v brew &> /dev/null; then
-                    brew install jq
-                else
-                    curl -L https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64 -o /tmp/jq
-                    chmod +x /tmp/jq
-                    export PATH="/tmp:$PATH"
-                fi
-                ;;
-        esac
-        
-        if command -v jq &> /dev/null; then
-            success "jq installé avec succès"
-        else
-            warn "Installation jq échouée, utilisation du fallback PowerShell"
-        fi
-    else
-        success "jq déjà installé"
+    # Run setup script with visible logs AND capture output
+    ./setup-prerequisites.sh 2>&1 | tee /tmp/setup-output.log
+    
+    # Extract Azure variables from captured output
+    AZURE_SUBSCRIPTION_ID=$(grep "export AZURE_SUBSCRIPTION_ID" /tmp/setup-output.log | cut -d"'" -f2 2>/dev/null)
+    AZURE_USER_NAME=$(grep "export AZURE_USER_NAME" /tmp/setup-output.log | cut -d"'" -f2 2>/dev/null)
+    UNIQUE_ID=$(grep "export UNIQUE_ID" /tmp/setup-output.log | cut -d"'" -f2 2>/dev/null)
+    
+    # Validate variables
+    if [[ -z "$AZURE_SUBSCRIPTION_ID" ]] || [[ -z "$UNIQUE_ID" ]]; then
+        # Fallback: get Azure info directly
+        AZURE_SUBSCRIPTION_ID=$(az account show --query "id" -o tsv 2>/dev/null)
+        AZURE_USER_NAME=$(az account show --query "user.name" -o tsv 2>/dev/null)
+        UNIQUE_ID=$(echo "$AZURE_USER_NAME" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]' | cut -c1-8)
     fi
     
-    # Installation Terraform
-    if ! command -v terraform &> /dev/null; then
-        log "Installation de Terraform..."
-        case $SYSTEM in
-            "windows")
-                TERRAFORM_VERSION="1.5.7"
-                TERRAFORM_URL="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_windows_amd64.zip"
-                
-                if command -v curl &> /dev/null; then
-                    mkdir -p /tmp/terraform
-                    cd /tmp/terraform
-                    curl -L "$TERRAFORM_URL" -o terraform.zip
-                    if command -v unzip &> /dev/null; then
-                        unzip -o terraform.zip
-                        chmod +x terraform
-                        mv terraform terraform.exe 2>/dev/null || true
-                    else
-                        # Fallback PowerShell pour décompresser
-                        powershell.exe -Command "
-                            try {
-                                Expand-Archive -Path 'terraform.zip' -DestinationPath '.' -Force
-                                if (Test-Path 'terraform') { Rename-Item 'terraform' 'terraform.exe' }
-                                Write-Host 'Terraform extracted successfully'
-                            } catch {
-                                Write-Error \$_.Exception.Message
-                            }
-                        " 
-                    fi
-                    chmod +x terraform.exe 2>/dev/null || chmod +x terraform 2>/dev/null || true
-                    export PATH="/tmp/terraform:$PATH"
-                    cd - >/dev/null
-                fi
-                ;;
-            "linux")
-                TERRAFORM_VERSION="1.5.7"
-                TERRAFORM_URL="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
-                
-                mkdir -p /tmp/terraform
-                cd /tmp/terraform
-                curl -L "$TERRAFORM_URL" -o terraform.zip
-                unzip -o terraform.zip
-                chmod +x terraform
-                export PATH="/tmp/terraform:$PATH"
-                cd - >/dev/null
-                ;;
-            "macos")
-                if command -v brew &> /dev/null; then
-                    brew tap hashicorp/tap && brew install hashicorp/tap/terraform
-                else
-                    TERRAFORM_VERSION="1.5.7"
-                    TERRAFORM_URL="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_darwin_amd64.zip"
-                    
-                    mkdir -p /tmp/terraform
-                    cd /tmp/terraform
-                    curl -L "$TERRAFORM_URL" -o terraform.zip
-                    unzip -o terraform.zip
-                    chmod +x terraform
-                    export PATH="/tmp/terraform:$PATH"
-                    cd - >/dev/null
-                fi
-                ;;
-        esac
-        
-        # Vérification avec les différents noms possibles et configuration du PATH
-        if command -v terraform &> /dev/null; then
-            success "Terraform installé avec succès ($(terraform version | head -n1))"
-        elif command -v terraform.exe &> /dev/null; then
-            # Créer un alias terraform pour terraform.exe
-            ln -sf "$(which terraform.exe)" "/tmp/terraform/terraform" 2>/dev/null || true
-            # S'assurer que terraform est accessible
-            export PATH="/tmp/terraform:$PATH"
-            success "Terraform installé avec succès ($(terraform.exe version | head -n1))"
-        elif [ -f "/tmp/terraform/terraform.exe" ]; then
-            # Terraform téléchargé mais pas dans le PATH
-            ln -sf "/tmp/terraform/terraform.exe" "/tmp/terraform/terraform" 2>/dev/null || true
-            export PATH="/tmp/terraform:$PATH"
-            success "Terraform configuré depuis /tmp/terraform"
-        else
-            warn "Installation Terraform échouée - tentative alternative..."
-            # Essayer d'utiliser Chocolatey sur Windows
-            if powershell.exe -Command "Get-Command choco -ErrorAction SilentlyContinue" &>/dev/null; then
-                powershell.exe -Command "choco install terraform -y" 2>/dev/null || true
-            fi
-            
-            if ! command -v terraform &> /dev/null && ! command -v terraform.exe &> /dev/null; then
-                error "Terraform requis. Installez manuellement: https://www.terraform.io/downloads.html"
-            fi
-        fi
-    else
-        success "Terraform déjà installé ($(terraform version | head -n1))"
-    fi
+    # Ensure Terraform is in PATH
+    export PATH="/tmp/terraform:$PATH"
     
-    # Installation Azure CLI
-    if ! command -v az &> /dev/null; then
-        log "Installation d'Azure CLI..."
-        case $SYSTEM in
-            "windows")
-                log "Tentative d'installation automatique d'Azure CLI sur Windows..."
-                
-                # Essayer winget d'abord (Windows 10+ moderne)
-                if command -v winget.exe &> /dev/null; then
-                    log "Installation via winget..."
-                    winget.exe install Microsoft.AzureCLI --silent --accept-source-agreements --accept-package-agreements 2>/dev/null || {
-                        warn "Installation winget échouée, essai avec PowerShell..."
-                        
-                        # Fallback: installation via PowerShell et MSI
-                        powershell.exe -Command "
-                            try {
-                                Write-Host 'Téléchargement Azure CLI MSI...'
-                                \$ProgressPreference = 'SilentlyContinue'
-                                Invoke-WebRequest -Uri 'https://aka.ms/installazurecliwindows' -OutFile '\$env:TEMP\\azure-cli.msi'
-                                Write-Host 'Installation Azure CLI...'
-                                Start-Process msiexec.exe -Wait -ArgumentList '/i', '\$env:TEMP\\azure-cli.msi', '/quiet', '/norestart'
-                                Remove-Item '\$env:TEMP\\azure-cli.msi' -Force -ErrorAction SilentlyContinue
-                                Write-Host 'Azure CLI installé avec succès'
-                            } catch {
-                                Write-Error \"Erreur d'installation: \$(\$_.Exception.Message)\"
-                            }
-                        " || warn "Installation PowerShell échouée"
-                    }
-                else
-                    # Fallback direct avec PowerShell
-                    log "Installation via PowerShell (MSI)..."
-                    powershell.exe -Command "
-                        try {
-                            Write-Host 'Téléchargement Azure CLI MSI...'
-                            \$ProgressPreference = 'SilentlyContinue'
-                            Invoke-WebRequest -Uri 'https://aka.ms/installazurecliwindows' -OutFile '\$env:TEMP\\azure-cli.msi'
-                            Write-Host 'Installation Azure CLI...'
-                            Start-Process msiexec.exe -Wait -ArgumentList '/i', '\$env:TEMP\\azure-cli.msi', '/quiet', '/norestart'
-                            Remove-Item '\$env:TEMP\\azure-cli.msi' -Force -ErrorAction SilentlyContinue
-                            Write-Host 'Azure CLI installé avec succès'
-                        } catch {
-                            Write-Error \"Erreur d'installation: \$(\$_.Exception.Message)\"
-                        }
-                    "
-                fi
-                
-                # Recharger le PATH pour détecter az
-                export PATH="/c/Program Files (x86)/Microsoft SDKs/Azure/CLI2/wbin:$PATH"
-                export PATH="/c/Program Files/Microsoft SDKs/Azure/CLI2/wbin:$PATH"
-                ;;
-            "linux")
-                log "Installation Azure CLI sur Linux..."
-                if command -v apt-get &> /dev/null; then
-                    # Ubuntu/Debian
-                    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-                elif command -v yum &> /dev/null; then
-                    # RHEL/CentOS
-                    sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
-                    sudo sh -c 'echo -e "[azure-cli]
-name=Azure CLI
-baseurl=https://packages.microsoft.com/yumrepos/azure-cli
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/azure-cli.repo'
-                    sudo yum install azure-cli
-                elif command -v dnf &> /dev/null; then
-                    # Fedora
-                    sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
-                    sudo dnf install -y azure-cli
-                else
-                    # Fallback: installation manuelle via curl
-                    curl -L https://aka.ms/InstallAzureCli | bash
-                fi
-                ;;
-            "macos")
-                if command -v brew &> /dev/null; then
-                    log "Installation Azure CLI via Homebrew..."
-                    brew install azure-cli
-                else
-                    log "Installation Azure CLI via script..."
-                    curl -L https://aka.ms/InstallAzureCli | bash
-                fi
-                ;;
-        esac
-        
-        # Vérification post-installation
-        if command -v az &> /dev/null; then
-            success "Azure CLI installé avec succès ($(az version --query '"azure-cli"' -o tsv 2>/dev/null || echo 'version inconnue'))"
-        else
-            warn "Installation automatique échouée. Installez manuellement:"
-            case $SYSTEM in
-                "windows") warn "  https://aka.ms/installazurecliwindows" ;;
-                "linux") warn "  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash" ;;
-                "macos") warn "  brew install azure-cli" ;;
-            esac
-            error "Azure CLI est requis pour continuer"
-        fi
-    else
-        success "Azure CLI déjà installé ($(az version --query '"azure-cli"' -o tsv 2>/dev/null || echo 'version inconnue'))"
-    fi
-    
-    # Vérification et démarrage automatique de Docker
-    if ! command -v docker &> /dev/null; then
-        warn "Docker non trouvé. Installation requise:"
-        case $SYSTEM in
-            "windows") warn "  Installez Docker Desktop depuis: https://www.docker.com/products/docker-desktop" ;;
-            "linux") warn "  curl -fsSL https://get.docker.com | sh" ;;
-            "macos") warn "  brew install --cask docker" ;;
-        esac
-        error "Docker est requis pour continuer"
-    else
-        success "Docker installé ($(docker --version))"
-        
-        # Vérifier si Docker daemon est en cours d'exécution
-        log "Vérification du daemon Docker..."
-        if ! docker ps &> /dev/null; then
-            warn "Docker daemon non accessible, tentative de démarrage..."
-            
-            case $SYSTEM in
-                "windows")
-                    log "Démarrage de Docker Desktop sur Windows..."
-                    
-                    # Méthode 1: Vérifier et démarrer via chemins directs
-                    DOCKER_STARTED=false
-                    
-                    # Chemins possibles pour Docker Desktop
-                    DOCKER_PATHS=(
-                        "/c/Program Files/Docker/Docker/Docker Desktop.exe"
-                        "/c/Users/$USER/AppData/Local/Programs/Docker/Docker/Docker Desktop.exe"
-                        "$LOCALAPPDATA/Programs/Docker/Docker/Docker Desktop.exe"
-                    )
-                    
-                    for docker_path in "${DOCKER_PATHS[@]}"; do
-                        if [ -f "$docker_path" ]; then
-                            log "Docker Desktop trouvé: $docker_path"
-                            log "Lancement de Docker Desktop..."
-                            
-                            # Démarrer Docker Desktop en arrière-plan
-                            nohup "$docker_path" > /dev/null 2>&1 &
-                            DOCKER_STARTED=true
-                            success "Docker Desktop lancé"
-                            break
-                        fi
-                    done
-                    
-                    # Méthode 2: Via PowerShell si path direct échoue
-                    if [ "$DOCKER_STARTED" != true ]; then
-                        log "Tentative via PowerShell..."
-                        powershell.exe -Command "
-                            try {
-                                \$dockerExe = Get-ChildItem -Path '\$env:ProgramFiles\\Docker\\Docker', '\$env:LOCALAPPDATA\\Programs\\Docker\\Docker' -Name 'Docker Desktop.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                                if (\$dockerExe) {
-                                    \$fullPath = \$dockerExe.FullName
-                                    Start-Process \$fullPath -WindowStyle Hidden
-                                    Write-Host \"Docker Desktop lancé: \$fullPath\"
-                                } else {
-                                    Write-Host \"Docker Desktop non trouvé dans les chemins standards\"
-                                }
-                            } catch {
-                                Write-Warning \"Erreur: \$(\$_.Exception.Message)\"
-                            }
-                        " && DOCKER_STARTED=true
-                    fi
-                    
-                    # Méthode 3: Via cmd start
-                    if [ "$DOCKER_STARTED" != true ]; then
-                        log "Tentative via cmd start..."
-                        cmd.exe //c "start \"\" \"Docker Desktop\"" 2>/dev/null && DOCKER_STARTED=true
-                    fi
-                    
-                    if [ "$DOCKER_STARTED" != true ]; then
-                        error "❌ Impossible de démarrer Docker Desktop automatiquement"
-                        warn "Veuillez démarrer Docker Desktop manuellement et relancer le script"
-                        exit 1
-                    fi
-                    ;;
-                "linux")
-                    log "Démarrage du service Docker sur Linux..."
-                    sudo systemctl start docker 2>/dev/null || {
-                        sudo service docker start 2>/dev/null || {
-                            warn "Impossible de démarrer Docker automatiquement"
-                            warn "Lancez manuellement: sudo systemctl start docker"
-                        }
-                    }
-                    ;;
-                "macos")
-                    log "Démarrage de Docker Desktop sur macOS..."
-                    open -a "Docker Desktop" 2>/dev/null || {
-                        open "/Applications/Docker.app" 2>/dev/null || {
-                            warn "Impossible de démarrer Docker Desktop"
-                            warn "Lancez manuellement Docker Desktop"
-                        }
-                    }
-                    ;;
-            esac
-            
-            # Attendre que Docker soit prêt
-            log "Attente du démarrage de Docker (max 2 minutes)..."
-            DOCKER_READY=false
-            MAX_DOCKER_WAIT=24  # 24 * 5s = 2 minutes
-            DOCKER_WAIT_COUNT=0
-            
-            while [ $DOCKER_WAIT_COUNT -lt $MAX_DOCKER_WAIT ] && [ "$DOCKER_READY" != true ]; do
-                DOCKER_WAIT_COUNT=$((DOCKER_WAIT_COUNT + 1))
-                
-                if docker ps &> /dev/null; then
-                    DOCKER_READY=true
-                    success "✅ Docker daemon opérationnel"
-                    break
-                else
-                    log "  Docker en cours de démarrage... $DOCKER_WAIT_COUNT/$MAX_DOCKER_WAIT (5s)"
-                    sleep 5
-                fi
-            done
-            
-            if [ "$DOCKER_READY" != true ]; then
-                warn "⚠️ Docker daemon pas encore prêt après 2 minutes"
-                warn "Actions possibles:"
-                warn "1. Attendez encore un peu (Docker Desktop peut être lent)"
-                warn "2. Vérifiez l'icône Docker dans la barre des tâches"
-                warn "3. Ouvrez Docker Desktop manuellement si nécessaire"
-                
-                echo
-                echo "Voulez-vous continuer à attendre ? [Y/n]"
-                read -r CONTINUE_WAIT
-                
-                if [ "$CONTINUE_WAIT" = "n" ] || [ "$CONTINUE_WAIT" = "N" ]; then
-                    error "❌ Arrêt du script. Relancez après avoir démarré Docker"
-                    exit 1
-                else
-                    log "Attente supplémentaire de Docker (1 minute)..."
-                    MAX_DOCKER_WAIT=12  # 1 minute de plus
-                    DOCKER_WAIT_COUNT=0
-                    
-                    while [ $DOCKER_WAIT_COUNT -lt $MAX_DOCKER_WAIT ] && [ "$DOCKER_READY" != true ]; do
-                        DOCKER_WAIT_COUNT=$((DOCKER_WAIT_COUNT + 1))
-                        
-                        if docker ps &> /dev/null; then
-                            DOCKER_READY=true
-                            success "✅ Docker daemon maintenant opérationnel!"
-                            break
-                        else
-                            log "  Attente Docker... $DOCKER_WAIT_COUNT/$MAX_DOCKER_WAIT (5s)"
-                            sleep 5
-                        fi
-                    done
-                    
-                    if [ "$DOCKER_READY" != true ]; then
-                        error "❌ Docker toujours inaccessible. Vérifications manuelles requises:"
-                        warn "• Docker Desktop est-il installé ?"
-                        warn "• L'icône Docker est-elle visible dans la barre des tâches ?"
-                        warn "• Essayez: docker --version && docker ps"
-                        exit 1
-                    fi
-                fi
-            fi
-        else
-            success "✅ Docker daemon opérationnel"
-        fi
-    fi
-    
-    success "✅ Toutes les dépendances sont prêtes"
+    success "Variables Azure configurées"
+
+
+
+
+    success "✅ Prérequis configurés avec succès"
 }
 
-# Fonction pour s'assurer que Terraform est accessible
-ensure_terraform() {
-    if command -v terraform &> /dev/null; then
-        return 0
-    elif command -v terraform.exe &> /dev/null; then
-        # Créer un alias si nécessaire
-        if [ ! -f "/tmp/terraform/terraform" ]; then
-            ln -sf "$(which terraform.exe)" "/tmp/terraform/terraform" 2>/dev/null || true
-        fi
-        export PATH="/tmp/terraform:$PATH"
-        return 0
-    elif [ -f "/tmp/terraform/terraform.exe" ]; then
-        # Utiliser la version téléchargée
-        if [ ! -f "/tmp/terraform/terraform" ]; then
-            ln -sf "/tmp/terraform/terraform.exe" "/tmp/terraform/terraform" 2>/dev/null || true
-        fi
-        export PATH="/tmp/terraform:$PATH"
-        return 0
-    else
-        error "Terraform non accessible. Vérifiez l'installation."
-        return 1
-    fi
-}
+
 
 # Parse arguments
 CLEAN=false
@@ -493,88 +77,22 @@ done
 
 log "🚀 DÉPLOIEMENT PORTAIL CLOUD OPTIMISÉ"
 
-# Installation automatique des dépendances
-install_dependencies
+# Configuration des prérequis (script externe)
+setup_prerequisites
 
 # ===========================
-# PHASE 0: AUTHENTICATION & SETUP
+# PHASE 0: CONFIGURATION INITIALE
 # ===========================
 log "Phase 0: Configuration initiale"
 
-# Check Azure CLI
-if ! command -v az &> /dev/null; then
-    error "Azure CLI non installé"
-fi
-
-# Login check and get account info
-ACCOUNT_CHECK=$(az account show 2>/dev/null) || { 
-    log "Connexion Azure requise..."
-    az login
-    ACCOUNT_CHECK=$(az account show)
-}
-
-# Récupération des infos via Azure CLI direct (sans jq)
-USER_NAME=$(az account show --query "user.name" -o tsv 2>/dev/null)
-SUBSCRIPTION_ID=$(az account show --query "id" -o tsv 2>/dev/null)
-
-# Génération UNIQUE_ID à partir du nom utilisateur
-UNIQUE_ID=$(echo "$USER_NAME" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]' | cut -c1-8)
+# Utiliser les variables du script de setup
+USER_NAME="$AZURE_USER_NAME"
+SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID"
 RG_NAME="rg-container-manager-$UNIQUE_ID"
 
 success "ID unique: $UNIQUE_ID | Subscription: $SUBSCRIPTION_ID"
 
-# ===========================
-# PHASE 0.5: VÉRIFICATION ET ENREGISTREMENT DES PROVIDERS AZURE
-# ===========================
-log "Vérification des providers Azure requis..."
 
-# Liste des providers requis pour ce déploiement
-REQUIRED_PROVIDERS=(
-    "Microsoft.App"
-    "Microsoft.ContainerRegistry" 
-    "Microsoft.ContainerService"
-    "Microsoft.OperationalInsights"
-    "Microsoft.DBforPostgreSQL"
-)
-
-# Vérification et enregistrement automatique des providers
-for provider in "${REQUIRED_PROVIDERS[@]}"; do
-    log "Vérification du provider $provider..."
-    
-    # Vérifier le statut du provider
-    PROVIDER_STATUS=$(az provider show --namespace "$provider" --query "registrationState" -o tsv 2>/dev/null || echo "NotFound")
-    
-    if [ "$PROVIDER_STATUS" != "Registered" ]; then
-        warn "Provider $provider non enregistré (statut: $PROVIDER_STATUS)"
-        log "Enregistrement du provider $provider..."
-        
-        # Enregistrer le provider
-        az provider register --namespace "$provider" --wait 2>/dev/null || {
-            warn "Impossible d'enregistrer automatiquement $provider"
-            warn "Enregistrement en arrière-plan..."
-            az provider register --namespace "$provider" 2>/dev/null || true
-        }
-        
-        # Vérifier le nouveau statut
-        NEW_STATUS=$(az provider show --namespace "$provider" --query "registrationState" -o tsv 2>/dev/null || echo "Unknown")
-        if [ "$NEW_STATUS" = "Registered" ]; then
-            success "Provider $provider enregistré avec succès"
-        elif [ "$NEW_STATUS" = "Registering" ]; then
-            warn "Provider $provider en cours d'enregistrement..."
-            success "L'enregistrement se poursuivra en arrière-plan"
-        else
-            warn "Statut du provider $provider: $NEW_STATUS"
-        fi
-    else
-        success "Provider $provider déjà enregistré"
-    fi
-done
-
-# Attendre un peu pour laisser les providers s'enregistrer
-log "Attente de la finalisation des enregistrements (10s)..."
-sleep 10
-
-success "✅ Vérification des providers terminée"
 
 # ===========================
 # PHASE 1: CLEANUP (IF REQUESTED)
@@ -603,9 +121,6 @@ fi
 log "Phase 2: Infrastructure Terraform"
 
 cd terraform/azure
-
-# S'assurer que Terraform est accessible
-ensure_terraform
 
 # Initialize Terraform (only if needed)
 if [ ! -d ".terraform" ]; then
@@ -642,7 +157,6 @@ fi
 
 # Première étape: déployer seulement l'infrastructure de base (sans Container Apps)
 log "Déploiement infrastructure de base (Registry + Database)..."
-ensure_terraform
 terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_resource_group.main" -target="azurerm_container_registry.main" -target="azurerm_log_analytics_workspace.main" -target="azurerm_postgresql_flexible_server.main" -target="azurerm_postgresql_flexible_server_database.main" -target="azurerm_postgresql_flexible_server_firewall_rule.allow_azure" -target="random_password.postgres_password" -target="random_password.jwt_secret" -out=tfplan-infra
 terraform apply -auto-approve tfplan-infra
 
@@ -696,7 +210,6 @@ log "Phase 4: Déploiement Container Apps avec images existantes"
 cd terraform/azure
 
 log "Déploiement des Container Apps..."
-ensure_terraform
 terraform plan -var="unique_id=$UNIQUE_ID" -out=tfplan-apps
 terraform apply -auto-approve tfplan-apps
 
