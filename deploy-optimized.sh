@@ -340,20 +340,21 @@ success "   Backend: $BACKEND_URL"
 if [ "$SKIP_BUILD" != true ] && [ -n "$BACKEND_URL" ]; then
     log "Phase 5: Build et déploiement Frontend avec l'API URL correcte"
     
-    # Attendre que le Backend soit opérationnel (temps réaliste)
-    log "Vérification que le Backend is opérationnel..."
+    # Attendre que le Backend soit opérationnel (logique corrigée)
+    log "Vérification que le Backend est opérationnel..."
     
-    # Test rapide simple d'abord (existence de l'endpoint)
-    if curl -sf --connect-timeout 10 --max-time 15 "$BACKEND_URL" >/dev/null 2>&1; then
-        log "  ✓ Backend répond, vérification de l'API..."
-        wait_for_condition "Backend API /health" \
-            "curl -sf --connect-timeout 10 --max-time 15 '$BACKEND_URL/api/health'" \
-            12 10 || warn "API /health pas encore prête, continuons..."
+    # Test direct de l'endpoint /api/health avec vérification correcte
+    HEALTH_CHECK_PASSED=false
+    
+    log "  Test /api/health..."
+    HEALTH_RESPONSE=$(curl -s --connect-timeout 10 --max-time 15 "$BACKEND_URL/api/health" 2>/dev/null || echo "")
+    
+    if echo "$HEALTH_RESPONSE" | grep -q '"success".*true'; then
+        HEALTH_CHECK_PASSED=true
+        success "✅ Backend API opérationnel (/api/health OK)"
     else
-        log "  Backend Container App en cours de démarrage..."
-        wait_for_condition "Backend Container App démarré" \
-            "curl -sf --connect-timeout 10 --max-time 15 '$BACKEND_URL'" \
-            15 8 || warn "Backend pas encore complètement prêt, continuons..."
+        log "  Réponse /api/health: $HEALTH_RESPONSE"
+        warn "Backend API pas encore prêt, continuons quand même..."
     fi
     
     # Build Frontend avec l'API URL correcte
@@ -400,11 +401,40 @@ fi
 # ===========================
 log "Phase 6: Vérifications finales"
 
-# Attendre que les applications soient prêtes (optimisé)
+# Vérification finale des applications (logique corrigée)
 log "Vérification du démarrage des applications..."
-wait_for_condition "Applications démarrées" \
-    "curl -sf --connect-timeout 3 '$BACKEND_URL/api/health' && curl -sf --connect-timeout 3 '$FRONTEND_URL' >/dev/null" \
-    10 3 || log "Applications en cours de démarrage..."
+
+BACKEND_OK=false
+FRONTEND_OK=false
+
+# Test Backend (avec patience pour cold start)
+if [ -n "$BACKEND_URL" ]; then
+    log "  Test Backend /api/health..."
+    HEALTH_RESPONSE=$(curl -s --connect-timeout 30 --max-time 45 "$BACKEND_URL/api/health" 2>/dev/null || echo "")
+    if echo "$HEALTH_RESPONSE" | grep -q '"success".*true'; then
+        BACKEND_OK=true
+        success "✅ Backend opérationnel"
+    else
+        warn "⚠️ Backend pas encore prêt (cold start possible)"
+    fi
+fi
+
+# Test Frontend
+if [ -n "$FRONTEND_URL" ]; then
+    log "  Test Frontend..."
+    if curl -s --connect-timeout 20 --max-time 30 "$FRONTEND_URL" >/dev/null 2>&1; then
+        FRONTEND_OK=true
+        success "✅ Frontend opérationnel"
+    else
+        warn "⚠️ Frontend pas encore prêt"
+    fi
+fi
+
+if [ "$BACKEND_OK" = true ] && [ "$FRONTEND_OK" = true ]; then
+    success "✅ Toutes les applications sont opérationnelles"
+else
+    warn "⚠️ Une ou plusieurs applications en cours de démarrage"
+fi
 
 # Test de connectivité final
 log "Test de connectivité des applications..."
@@ -543,14 +573,25 @@ if [ -n "$BACKEND_URL" ] && [ -n "$FRONTEND_URL" ]; then
         log "Redémarrage backend pour appliquer MSI + CORS..."
         az containerapp revision restart --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --revision "$BACKEND_REVISION" 2>/dev/null || true
         
-        # Attente DYNAMIQUE que le backend redémarre (optimisée)
+        # Attente du redémarrage backend (logique corrigée)
         log "Attente du redémarrage backend..."
         
-        # Utiliser la fonction générique avec fallback silencieux
-        if ! wait_for_condition "Backend redémarrage" \
-            "curl -sf --connect-timeout 3 --max-time 8 '$BACKEND_URL/api/health'" \
-            15 20 2>/dev/null; then
-            warn "⚠️ Timeout redémarrage backend, continuons quand même..."
+        BACKEND_RESTARTED=false
+        for i in {1..10}; do
+            log "  Vérification redémarrage $i/10..."
+            HEALTH_RESPONSE=$(curl -s --connect-timeout 15 --max-time 20 "$BACKEND_URL/api/health" 2>/dev/null || echo "")
+            if echo "$HEALTH_RESPONSE" | grep -q '"success".*true'; then
+                BACKEND_RESTARTED=true
+                success "✅ Backend redémarré et opérationnel"
+                break
+            else
+                log "    Backend en cours de redémarrage, attente 15s..."
+                [ $i -lt 10 ] && sleep 15
+            fi
+        done
+        
+        if [ "$BACKEND_RESTARTED" != true ]; then
+            warn "⚠️ Backend pas encore complètement redémarré, continuons..."
         fi
     fi
     
@@ -568,18 +609,40 @@ log "Phase 5: Initialisation complète de la base de données"
 log "Attente que le backend soit prêt avec la nouvelle configuration..."
 [[ -z "$BACKEND_URL" ]] && error "Backend URL manquante"
 
-# Utilisation de la fonction générique optimisée
-wait_for_condition "Backend API opérationnel" \
-    "curl -sf '$BACKEND_URL/api/health' | grep -q '\"success\".*true'" \
-    20 15
+# Vérification Backend API avec logique corrigée
+log "Test Backend API /api/health..."
+for i in {1..20}; do
+    HEALTH_RESPONSE=$(curl -s --connect-timeout 10 --max-time 15 "$BACKEND_URL/api/health" 2>/dev/null || echo "")
+    if echo "$HEALTH_RESPONSE" | grep -q '"success".*true'; then
+        success "✅ Backend API opérationnel"
+        break
+    else
+        log "  Tentative $i/20 - Backend pas encore prêt (15s)..."
+        [ $i -lt 20 ] && sleep 15
+    fi
+done
 
 # ÉTAPE 5B: Vérification de la connexion à la base de données
 log "Vérification de la connexion à la base de données PostgreSQL..."
 
-# Connexion DB avec fonction générique optimisée
-wait_for_condition "Connexion PostgreSQL" \
-    "curl -sf '$BACKEND_URL/api/health/db-status' | grep -q '\"success\".*true' && curl -sf '$BACKEND_URL/api/health/db-status' | grep -q '\"connected\".*true'" \
-    5 10
+# Vérification connexion PostgreSQL avec logique corrigée
+log "Test connexion PostgreSQL..."
+DB_CONNECTION_OK=false
+for i in {1..5}; do
+    DB_STATUS=$(curl -s --connect-timeout 10 --max-time 15 "$BACKEND_URL/api/health/db-status" 2>/dev/null || echo "{}")
+    if echo "$DB_STATUS" | grep -q '"success".*true' && echo "$DB_STATUS" | grep -q '"connected".*true'; then
+        DB_CONNECTION_OK=true
+        success "✅ Connexion PostgreSQL OK"
+        break
+    else
+        log "  Tentative $i/5 - DB pas encore connectée (10s)..."
+        [ $i -lt 5 ] && sleep 10
+    fi
+done
+
+if [ "$DB_CONNECTION_OK" != true ]; then
+    error "❌ Impossible de se connecter à PostgreSQL"
+fi
 
 # ÉTAPE 5C: Initialisation de la base de données (optimisée)
 log "Initialisation de la base de données..."
