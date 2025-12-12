@@ -22,6 +22,49 @@ warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 error() { echo -e "${RED}❌${NC} $1"; exit 1; }
 
 # =============================================================
+# TERRAFORM STATE MANAGEMENT FUNCTIONS
+# =============================================================
+terraform_sync_state() {
+    local description="$1"
+    log "Synchronisation état Terraform: $description"
+    
+    # Refresh avec retry en cas d'erreur temporaire
+    for i in {1..3}; do
+        if terraform refresh -var="unique_id=$UNIQUE_ID" -lock-timeout=300s >/dev/null 2>&1; then
+            success "État Terraform synchronisé"
+            return 0
+        else
+            warn "Tentative sync $i/3 échouée, retry..."
+            sleep 2
+        fi
+    done
+    warn "Synchronisation partielle, continuons..."
+}
+
+terraform_smart_apply() {
+    local plan_file="$1"
+    local target_desc="$2"
+    
+    log "Application Terraform: $target_desc"
+    
+    # Apply avec gestion d'erreurs et retry
+    for i in {1..2}; do
+        if terraform apply -auto-approve -lock-timeout=300s "$plan_file"; then
+            success "$target_desc déployé avec succès"
+            return 0
+        else
+            warn "Apply $i/2 échoué pour $target_desc"
+            if [[ $i -eq 1 ]]; then
+                log "Refresh état et retry..."
+                terraform_sync_state "retry $target_desc"
+                sleep 3
+            fi
+        fi
+    done
+    error "Échec déploiement $target_desc après 2 tentatives"
+}
+
+# =============================================================
 # GENERIC WAIT FUNCTION FOR CONDITIONS
 # =============================================================
 wait_for_condition() {
@@ -129,23 +172,35 @@ success "ID unique: $UNIQUE_ID | Subscription: $SUBSCRIPTION_ID"
 # PHASE 1: CLEANUP (IF REQUESTED)
 # ===========================
 if [ "$CLEAN" = true ]; then
-    log "Phase 1: Nettoyage des ressources"
+    log "🧹 Nettoyage intelligent des ressources..."
     
-    # Delete resource group (async)
+    cd terraform/azure
+    
+    # Unlock et nettoyage Terraform
+    terraform force-unlock -force $(terraform state list 2>/dev/null | head -1 | cut -d'.' -f1) 2>/dev/null || true
+    terraform init -upgrade -reconfigure 2>/dev/null || terraform init
+    
+    # Import RG pour destruction propre si existe
+    if az group show --name "$RG_NAME" >/dev/null 2>&1; then
+        terraform import -var="unique_id=$UNIQUE_ID" azurerm_resource_group.main "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$RG_NAME" 2>/dev/null || true
+        terraform plan -destroy -var="unique_id=$UNIQUE_ID" -out=destroy.tfplan 2>/dev/null || true
+        terraform apply -auto-approve destroy.tfplan 2>/dev/null || true
+    fi
+    
+    # Fallback Azure CLI si Terraform échoue
     az group delete --name "$RG_NAME" --yes --no-wait 2>/dev/null || true
     
-    # Clean Terraform state
-    cd terraform/azure
-    rm -f .terraform.lock.hcl terraform.tfstate* tfplan* .terraform -rf 2>/dev/null || true
+    # Clean files
+    rm -f .terraform.lock.hcl terraform.tfstate* tfplan* destroy.tfplan .terraform -rf 2>/dev/null || true
+    
     cd ../..
     
-    success "Nettoyage lancé (asynchrone)"
+    success "Nettoyage lancé (optimisé)"
     
-    # Wait smartly for cleanup to start (optimized)
-    log "Attente intelligente du nettoyage..."
+    # Wait intelligently for cleanup
     wait_for_condition "Nettoyage des ressources" \
-        "! az group show -n '$RG_NAME' >/dev/null 2>&1 || [ \$(az resource list -g '$RG_NAME' --query 'length(@)' -o tsv 2>/dev/null || echo 10) -lt 5 ]" \
-        12 5 || log "Nettoyage en cours, continuons..."
+        "! az group show -n '$RG_NAME' >/dev/null 2>&1" \
+        8 5 || log "Nettoyage en cours, continuons..."
 fi
 
 # ===========================
@@ -155,43 +210,52 @@ log "Phase 2: Infrastructure Terraform"
 
 cd terraform/azure
 
-# Initialize Terraform (only if needed)
-if [ ! -d ".terraform" ]; then
-    log "Initialisation Terraform..."
-    terraform init -upgrade
+# Initialisation et synchronisation Terraform intelligente
+log "Initialisation Terraform optimisée..."
+
+# Init avec gestion des locks
+terraform init -upgrade || {
+    warn "Lock détecté, forçage unlock..."
+    terraform force-unlock -force $(ls .terraform/*.tfstate 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "manual") 2>/dev/null || true
+    terraform init -reconfigure
+}
+
+# Synchronisation état et import batch intelligent
+log "Synchronisation intelligente de l'état..."
+terraform_sync_state "initial"
+
+# Import batch des ressources existantes (optimisé)
+TERRAFORM_STATE=$(terraform state list 2>/dev/null || echo "")
+
+# Import RG si existe mais pas dans état
+if az group show --name "$RG_NAME" >/dev/null 2>&1 && ! echo "$TERRAFORM_STATE" | grep -q "azurerm_resource_group.main"; then
+    log "Import Resource Group existant..."
+    terraform import -var="unique_id=$UNIQUE_ID" azurerm_resource_group.main "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$RG_NAME" 2>/dev/null || true
 fi
 
-# Smart conflict resolution
-log "Résolution des conflits d'état..."
-if az group show --name "$RG_NAME" &>/dev/null; then
-    # Import existing container apps if they exist but aren't in state
-    BACKEND_EXISTS=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || echo "null")
-    FRONTEND_EXISTS=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" 2>/dev/null || echo "null")
-    
-    # Vérifier l'état actuel de Terraform (sans demander les variables)
-    TERRAFORM_STATE=$(terraform state list 2>/dev/null || echo "")
-    
-    if [ "$BACKEND_EXISTS" != "null" ] && ! echo "$TERRAFORM_STATE" | grep -q "azurerm_container_app.backend"; then
-        warn "Import backend existant dans l'état Terraform"
-        BACKEND_ID=$(az containerapp show --name "backend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "id" -o tsv 2>/dev/null)
-        if [ -n "$BACKEND_ID" ]; then
-            terraform import -var="unique_id=$UNIQUE_ID" "azurerm_container_app.backend" "$BACKEND_ID" 2>/dev/null || true
-        fi
+# Import Container Apps si existent (batch optimisé)
+for app_type in backend frontend; do
+    if az containerapp show --name "${app_type}-$UNIQUE_ID" --resource-group "$RG_NAME" >/dev/null 2>&1 && ! echo "$TERRAFORM_STATE" | grep -q "azurerm_container_app.${app_type}"; then
+        log "Import ${app_type} existant..."
+        APP_ID=$(az containerapp show --name "${app_type}-$UNIQUE_ID" --resource-group "$RG_NAME" --query "id" -o tsv 2>/dev/null)
+        [ -n "$APP_ID" ] && terraform import -var="unique_id=$UNIQUE_ID" "azurerm_container_app.${app_type}" "$APP_ID" 2>/dev/null || true
     fi
-    
-    if [ "$FRONTEND_EXISTS" != "null" ] && ! echo "$TERRAFORM_STATE" | grep -q "azurerm_container_app.frontend"; then
-        warn "Import frontend existant dans l'état Terraform"
-        FRONTEND_ID=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "id" -o tsv 2>/dev/null)
-        if [ -n "$FRONTEND_ID" ]; then
-            terraform import -var="unique_id=$UNIQUE_ID" "azurerm_container_app.frontend" "$FRONTEND_ID" 2>/dev/null || true
-        fi
-    fi
-fi
+done
 
-# Première étape: déployer seulement l'infrastructure de base (sans Container Apps)
-log "Déploiement infrastructure de base (Registry + Database)..."
-terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_resource_group.main" -target="azurerm_container_registry.main" -target="azurerm_log_analytics_workspace.main" -target="azurerm_postgresql_flexible_server.main" -target="azurerm_postgresql_flexible_server_database.main" -target="azurerm_postgresql_flexible_server_firewall_rule.allow_azure" -target="random_password.postgres_password" -target="random_password.jwt_secret" -out=tfplan-infra
-terraform apply -auto-approve tfplan-infra
+# Étape 1: Infrastructure de base (optimisée)
+log "Plan infrastructure de base..."
+terraform plan -var="unique_id=$UNIQUE_ID" \
+    -target="azurerm_resource_group.main" \
+    -target="azurerm_container_registry.main" \
+    -target="azurerm_log_analytics_workspace.main" \
+    -target="azurerm_postgresql_flexible_server.main" \
+    -target="azurerm_postgresql_flexible_server_database.main" \
+    -target="azurerm_postgresql_flexible_server_firewall_rule.allow_azure" \
+    -target="random_password.postgres_password" \
+    -target="random_password.jwt_secret" \
+    -out=tfplan-infra -compact-warnings
+
+terraform_smart_apply "tfplan-infra" "Infrastructure de base"
 
 # Get outputs pour ACR
 log "Récupération des informations ACR..."
@@ -235,11 +299,19 @@ log "Phase 4: Déploiement Backend Container App"
 
 cd terraform/azure
 
-log "Déploiement du Backend Container App..."
-terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_container_app_environment.main" -target="azurerm_container_app.backend" -out=tfplan-backend
-terraform apply -auto-approve tfplan-backend
+log "Plan Backend Container App..."
+terraform plan -var="unique_id=$UNIQUE_ID" \
+    -target="azurerm_container_app_environment.main" \
+    -target="azurerm_container_app.backend" \
+    -out=tfplan-backend -compact-warnings
 
-# Récupération de l'URL Backend seulement
+terraform_smart_apply "tfplan-backend" "Backend Container App"
+
+# Attente courte pour que Terraform outputs soient disponibles
+log "Attente initialisation Backend..."
+sleep 10
+
+# Récupération de l'URL Backend
 log "Récupération de l'URL Backend..."
 BACKEND_URL=$(terraform output -raw backend_url 2>/dev/null)
 
@@ -268,11 +340,21 @@ success "   Backend: $BACKEND_URL"
 if [ "$SKIP_BUILD" != true ] && [ -n "$BACKEND_URL" ]; then
     log "Phase 5: Build et déploiement Frontend avec l'API URL correcte"
     
-    # Attendre que le Backend soit opérationnel (optimisé)
-    log "Vérification que le Backend est opérationnel..."
-    wait_for_condition "Backend prêt pour frontend" \
-        "curl -sf --connect-timeout 3 '$BACKEND_URL/api/health'" \
-        5 3 || warn "Backend pas encore prêt, build frontend quand même..."
+    # Attendre que le Backend soit opérationnel (temps réaliste)
+    log "Vérification que le Backend is opérationnel..."
+    
+    # Test rapide simple d'abord (existence de l'endpoint)
+    if curl -sf --connect-timeout 10 --max-time 15 "$BACKEND_URL" >/dev/null 2>&1; then
+        log "  ✓ Backend répond, vérification de l'API..."
+        wait_for_condition "Backend API /health" \
+            "curl -sf --connect-timeout 10 --max-time 15 '$BACKEND_URL/api/health'" \
+            12 10 || warn "API /health pas encore prête, continuons..."
+    else
+        log "  Backend Container App en cours de démarrage..."
+        wait_for_condition "Backend Container App démarré" \
+            "curl -sf --connect-timeout 10 --max-time 15 '$BACKEND_URL'" \
+            15 8 || warn "Backend pas encore complètement prêt, continuons..."
+    fi
     
     # Build Frontend avec l'API URL correcte
     log "  📦 Build Frontend avec API URL: $BACKEND_URL/api"
@@ -281,35 +363,23 @@ if [ "$SKIP_BUILD" != true ] && [ -n "$BACKEND_URL" ]; then
     docker push "$ACR_SERVER/dashboard-frontend:latest"
     success "✅ Frontend construit et poussé avec l'API URL correcte"
     
-    # Déploiement du Frontend Container App
+    # Déploiement du Frontend Container App (optimisé)
     log "  🚀 Déploiement Frontend Container App..."
     cd terraform/azure
-    terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_container_app.frontend" -out=tfplan-frontend
-    terraform apply -auto-approve tfplan-frontend
     
-    # Récupération URL Frontend
+    terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_container_app.frontend" -out=tfplan-frontend -compact-warnings
+    terraform_smart_apply "tfplan-frontend" "Frontend Container App"
+    
+    # Récupération URL Frontend avec fallback
     FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null)
-    cd ../..
-    
     if [ -z "$FRONTEND_URL" ]; then
         FRONTEND_FQDN=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
-        if [ -n "$FRONTEND_FQDN" ]; then
-            FRONTEND_URL="https://$FRONTEND_FQDN"
-        fi
+        [ -n "$FRONTEND_FQDN" ] && FRONTEND_URL="https://$FRONTEND_FQDN"
     fi
     
-    success "✅ Frontend déployé avec succès"
-    success "   Frontend: $FRONTEND_URL"
-    
-    # Déploiement du Frontend Container App
-    log "  🚀 Déploiement Frontend Container App..."
-    cd terraform/azure
-    terraform plan -var="unique_id=$UNIQUE_ID" -target="azurerm_container_app.frontend" -out=tfplan-frontend
-    terraform apply -auto-approve tfplan-frontend
-    
-    # Récupération URL Frontend
-    FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null)
     cd ../..
+    
+    success "✅ Frontend déployé avec succès: $FRONTEND_URL"
     
     if [ -z "$FRONTEND_URL" ]; then
         FRONTEND_FQDN=$(az containerapp show --name "frontend-$UNIQUE_ID" --resource-group "$RG_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)

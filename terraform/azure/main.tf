@@ -72,6 +72,13 @@ resource "azurerm_container_registry" "main" {
   sku                 = "Basic"
   admin_enabled       = true
 
+  # Optimisation: éviter les recréations sur changements mineurs
+  lifecycle {
+    ignore_changes = [
+      tags["CreatedDate"],  # Ignore les tags auto-générés
+    ]
+  }
+
   tags = {
     Environment = "production"
     ManagedBy   = "Terraform"
@@ -120,9 +127,13 @@ resource "azurerm_postgresql_flexible_server" "main" {
   backup_retention_days       = 7
   geo_redundant_backup_enabled = false
 
-  # Ignorer les changements de zone pour éviter les erreurs de mise à jour
+  # Optimisations lifecycle pour éviter les recreations
   lifecycle {
-    ignore_changes = [zone]
+    ignore_changes = [
+      zone,
+      high_availability  # Évite les recreations inutiles sur changements HA
+    ]
+    prevent_destroy = false  # Permet destruction pour dev/test
   }
 
   tags = {
@@ -196,23 +207,8 @@ output "database_url" {
   sensitive = true
 }
 
-# Outputs pour les Container Apps
-output "backend_url" {
-  description = "URL du backend Container App"
-  value = "https://${azurerm_container_app.backend.ingress[0].fqdn}"
-}
+# Outputs pour les Container Apps (conditionnels)
+# Ces outputs seront disponibles après déploiement des Container Apps
 
-output "frontend_url" {
-  description = "URL du frontend Container App"  
-  value = "https://${azurerm_container_app.frontend.ingress[0].fqdn}"
-}
-
-output "backend_fqdn" {
-  description = "FQDN du backend Container App"
-  value = azurerm_container_app.backend.ingress[0].fqdn
-}
-
-output "frontend_fqdn" {
-  description = "FQDN du frontend Container App"
-  value = azurerm_container_app.frontend.ingress[0].fqdn
-}
+# Note: Ces outputs sont dans container-apps.tf séparément car les Container Apps
+# sont déployés en phases pour éviter les dépendances circulaires

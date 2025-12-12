@@ -1,100 +1,146 @@
 # 🚀 Portail Cloud Container
 
-Application web moderne pour gérer vos conteneurs Docker avec déploiement automatisé sur Azure.
+Plateforme de gestion de containers Azure avec interface web moderne. Déploiement automatisé sur Azure Container Apps avec PostgreSQL, authentification JWT et dashboard temps réel.
 
-## ✨ Fonctionnalités
+## ⚡ Déploiement en 1 Commande
 
-- **Dashboard temps réel** : Surveillance des conteneurs en direct
-- **Interface multi-rôles** : Séparation admin/client
-- **Métriques avancées** : CPU, mémoire, réseau, stockage  
-- **Actions conteneurs** : Start/Stop/Restart en temps réel
-- **Déploiement automatique** : Infrastructure et applications en une commande
-- **Base de données auto-initialisée** : Schémas créés automatiquement
-- **Déploiement Azure** : Infrastructure as Code avec Terraform
-- **API sécurisée** : Backend Node.js + JWT
+```bash
+bash ./deploy-optimized.sh
+```
+
+**C'est tout !** Le script configure automatiquement tous les outils et déploie l'infrastructure complète.
+
+## 🛠️ Prérequis
+
+- **Compte Azure** (avec permissions Contributor)
+- **Docker Desktop** installé et démarré
+- **Bash** (Windows/Linux/macOS)
+
+> ⚠️ **Aucune configuration manuelle nécessaire** - tout est automatique !
+
+## 📋 Que fait le script ?
+
+### 🔧 Configuration automatique
+- ✅ Installe Azure CLI, Terraform, jq si manquants
+- ✅ Vous connecte à Azure (`az login`)
+- ✅ Génère un ID unique depuis votre email
+- ✅ Enregistre les providers Azure requis
+- ✅ Démarre Docker si nécessaire
+
+### 🏗️ Infrastructure déployée
+- 🗃️ **Base de données** PostgreSQL (mots de passe auto-générés)
+- 🐳 **Container Registry** Azure (ACR)
+- 🌐 **Container Apps** Backend + Frontend
+- 📊 **Monitoring** Log Analytics
+- 🔒 **Sécurité** HTTPS automatique + JWT
+
+### 🎯 Résultat final
+- **URLs publiques HTTPS** fonctionnelles
+- **Base de données** initialisée avec utilisateurs test
+- **Applications** complètement opérationnelles
+- **Durée** : 5-8 minutes | **Coût** : ~2-3€/jour
+
+## 🐛 Debugging & Maintenance
+
+### 🧹 Redémarrer à zéro
+```bash
+bash ./deploy-optimized.sh --clean
+```
+Supprime toutes les ressources Azure et redéploie proprement.
+
+### 🔄 Après une erreur
+```bash
+# Relancer directement après une erreur
+bash ./deploy-optimized.sh
+```
+Le script gère automatiquement les états existants et reprend où il s'est arrêté.
+
+### 📊 Validation complète
+```powershell
+.\validate-deployment-clean.ps1
+```
 
 ## 🏗️ Architecture
 
 ```
-├── dashboard-frontend/     # Next.js + Tailwind CSS
-├── dashboard-backend/      # Node.js + Express API
-├── database/              # PostgreSQL + init script
-├── terraform/azure/       # Infrastructure Azure
-├── deploy-simple.ps1      # Déploiement automatisé
-└── docker-compose.yml     # Développement local
+┌─────────────────┐    ┌─────────────────┐
+│   Frontend      │◄───┤    Backend      │
+│   (Next.js)     │    │   (Node.js)     │
+│   Container App │    │   Container App │
+└─────────────────┘    └─────────────────┘
+         │                       │
+         └───────────────────────┼──────────────┐
+                                 │              │
+              ┌─────────────────┐│   ┌─────────────────┐
+              │  PostgreSQL     ││   │ Container       │
+              │  Database       ││   │ Registry (ACR)  │
+              └─────────────────┘│   └─────────────────┘
+                                 │
+              ┌─────────────────┐│
+              │ Log Analytics   ││
+              │ Workspace       ││
+              └─────────────────┘│
 ```
 
-## 🚀 Déploiement Azure (Recommandé)
+## 🔑 Utilisateurs de Test Créés
 
-### Prérequis
-- Azure CLI installé et connecté (`az login`)
-- Docker Desktop démarré
-- PowerShell 5.1+
+| Rôle | Email | Mot de passe |
+|------|--------|---------------|
+| Admin | `admin@portail-cloud.com` | `admin123` |
+| Client | `client1@portail-cloud.com` | `client123` |
+| Client | `client2@portail-cloud.com` | `client123` |
+| Client | `client3@portail-cloud.com` | `client123` |
 
-### Déploiement Automatique Complet
-```powershell
-# Déploiement en une commande
-.\deploy-final.ps1
+## 🛠️ Technologies
 
-# Validation post-déploiement (optionnel)
-.\validate-deployment-clean.ps1 -Verbose
+- **Frontend** : Next.js 14, TypeScript, Tailwind CSS
+- **Backend** : Node.js, Express, TypeScript
+- **Base de données** : PostgreSQL Flexible Server
+- **Infrastructure** : Azure Container Apps, Terraform
+- **Monitoring** : Azure Log Analytics
+- **CI/CD** : Scripts Bash optimisés
+
+## 📁 Structure Projet
+
+```
+portail-cloud-container/
+├── 🚀 deploy-optimized.sh       # Script de déploiement principal
+├── 🔧 setup-prerequisites.sh    # Configuration automatique des outils
+├── 📊 validate-deployment-clean.ps1  # Script de validation
+├── 🌐 dashboard-frontend/       # Application Next.js
+├── ⚙️  dashboard-backend/        # API Node.js
+├── 🏗️ terraform/azure/          # Infrastructure Terraform
+├── 🐳 docker-images/           # Images Docker de démonstration
+└── 🔧 nginx/                   # Configuration Nginx
 ```
 
-### Ce qui est automatisé :
-✅ **Infrastructure Azure** (Terraform)
-- PostgreSQL Flexible Server
-- Azure Container Apps Environment  
-- Azure Container Registry
-- Log Analytics Workspace
+## 🎯 Endpoints Utiles
 
-✅ **Applications**
-- Build et push des images Docker
-- Déploiement backend/frontend
-- Configuration des variables d'environnement
-- URLs automatiquement configurées
+Une fois déployé :
+- **Frontend** : `https://frontend-[votre-id].azurecontainerapps.io`
+- **Backend API** : `https://backend-[votre-id].azurecontainerapps.io/api`
+- **Health Check** : `https://backend-[votre-id].azurecontainerapps.io/api/health`
+- **Database Status** : `https://backend-[votre-id].azurecontainerapps.io/api/health/db-status`
 
-✅ **Base de Données**
-- Initialisation automatique des schémas
-- Création des utilisateurs par défaut
-- Configuration des indexes et triggers
+## ❓ Problèmes Courants
 
-✅ **Validation**
-- Tests de connectivité
-- Vérification de l'authentification
-- Validation des endpoints API
+| Problème | Solution |
+|----------|----------|
+| Docker pas démarré | Lancer Docker Desktop manuellement |
+| Erreur Azure CLI | `az logout` puis relancer le script |
+| Timeout Terraform | Relancer `bash ./deploy-optimized.sh` |
+| Conflit de ressources | `bash ./deploy-optimized.sh --clean` |
 
-Le script fait tout automatiquement :
-- ✅ Détecte votre compte Azure
-- ✅ Installe Terraform si nécessaire  
-- ✅ Crée l'infrastructure Azure
-- ✅ Déploie l'application
-- ✅ Affiche les URLs d'accès
+## 🏷️ Versions
 
-### Ressources créées
-- **Resource Group** : `portail-cloud-dev-rg`
-- **Container Apps** : Environnement serverless
-- **Log Analytics** : Monitoring intégré
-- **Région** : France Central (optimal)
+- **Terraform** : 1.5.7
+- **Azure CLI** : Dernière version
+- **Node.js** : 18 LTS
+- **Next.js** : 14.x
 
-## 🔧 Développement local (Optionnel)
+---
 
-```bash
-# Pour développer en local
-docker-compose up -d
-
-# Accès local
-Frontend: http://localhost:3000
-Backend: http://localhost:5000
-```
-
-## 👥 Comptes par défaut
-
-- **Admin** : admin@portail-cloud.com / admin123
-- **Client** : client1@portail-cloud.com / client123
-
-## 🧹 Nettoyage Azure
-
-```powershell
+💡 **Astuce** : Le système utilise votre email Azure pour générer un ID unique. Toutes les ressources seront nommées `resource-[vos-8-premiers-chars]`.
 # Supprimer toutes les ressources Azure
 az group delete --name portail-cloud-dev-rg --yes
 ```
