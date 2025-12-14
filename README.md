@@ -221,22 +221,3 @@ Une fois déployé :
 az group delete --name portail-cloud-dev-rg --yes
 ```
 
-## 📊 Stack technique
-
-- **Frontend** : Next.js, TypeScript, Tailwind CSS
-- **Backend** : Node.js, Express, Socket.io
-- **Database** : PostgreSQL 15
-- **Cloud** : Azure Container Apps, Terraform
-- **DevOps** : Infrastructure as Code, déploiement automatisé
-
-## 🎯 Avantages Azure
-
-- **Serverless** : Scaling automatique 0-N instances
-- **Économique** : Pay-per-use, gratuit avec Azure Student  
-- **Sécurisé** : HTTPS, isolation réseau
-- **Monitoring** : Logs et métriques intégrés
-- **Simple** : Un seul script pour tout déployer
-
----
-
-> **Prêt à déployer ?** Lancez `bash ./deploy-universal.sh` et votre app sera en ligne en 10-15 minutes ! 🎉
