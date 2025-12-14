@@ -1,16 +1,39 @@
-# Dockerfile ultra-simple pour déploiement portable
+# Dockerfile optimisé pour déploiement rapide et fiable
 FROM ubuntu:22.04
 
-# Installation en une seule couche pour optimiser
-RUN apt-get update && apt-get install -y \
-    curl wget unzip jq bash ca-certificates gnupg lsb-release \
-    && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
-    && wget -O tf.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip \
+# Variables pour optimisation réseau
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+ENV TERRAFORM_VERSION=1.5.7
+
+# Installation optimisée en couches pour cache Docker
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+    curl wget unzip jq bash ca-certificates gnupg lsb-release apt-transport-https \
+    && rm -rf /var/lib/apt/lists/*
+
+# Azure CLI (installation rapide)
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/azure-cli.list \
+    && apt-get update -qq && apt-get install -y --no-install-recommends azure-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# Terraform (téléchargement avec retry et timeout généreux)
+RUN for i in 1 2 3; do \
+        wget --timeout=60 --tries=3 -O tf.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" && break || sleep 10; \
+    done \
     && unzip tf.zip -d /usr/local/bin && rm tf.zip \
-    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
-    && apt-get update && apt-get install -y docker-ce-cli \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && chmod +x /usr/local/bin/terraform
+
+# Docker CLI (installation rapide)
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update -qq && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configuration réseau optimisée pour Terraform
+ENV TF_CLI_CONFIG_FILE=/tmp/terraform.rc
+RUN echo 'plugin_cache_dir = "/tmp/.terraform.d/plugin-cache"' > /tmp/terraform.rc \
+    && mkdir -p /tmp/.terraform.d/plugin-cache
 
 WORKDIR /workspace
 ENTRYPOINT ["bash"]
