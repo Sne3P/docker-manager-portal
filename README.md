@@ -22,6 +22,7 @@ Depuis le dashboard, vous pouvez :
 ---
 
 ## ⚡ Déploiement (3 Options)
+ATTENTION: les déploiements docker peuvent faire des erreurs timeout car long, sur toutes les options, l'installation est très longue et le deploiement peut dépasser 10 minutes car tout est automatique. Veriifez si vous utiliser le script "deploy-optimized" à bien regarder la fenêtre Azure dérrière qui s'ouvre pour vous connecter (regardez dérriere toutes les fenêtres du bureau). 
 
 ### 🎯 Option 1: Script Universel (Recommandé)
 ```bash
