@@ -239,4 +239,4 @@ az group delete --name portail-cloud-dev-rg --yes
 
 ---
 
-> **Prêt à déployer ?** Lancez `.\deploy-simple.ps1` et votre app sera en ligne en quelques minutes ! 🎉
+> **Prêt à déployer ?** Lancez `bash ./deploy-universal.sh` et votre app sera en ligne en 10-15 minutes ! 🎉
