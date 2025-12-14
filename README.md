@@ -1,22 +1,73 @@
 # 🚀 Portail Cloud Container
 
-Plateforme de gestion de containers Azure avec interface web moderne. Déploiement automatisé sur Azure Container Apps avec PostgreSQL, authentification JWT et dashboard temps réel.
+## 📋 Description du Projet
 
-## ⚡ Déploiement en 1 Commande
+**Infrastructure Azure complète** avec dashboard web pour **gérer des containers Azure automatiquement**. 
 
+### 🎯 Objectif
+Depuis le dashboard, vous pouvez :
+- **Créer** des containers avec des applications automatiquement
+- **Manager** vos containers (start/stop/delete/create)
+- **Monitorer** l'état et les performances en temps réel
+- **Déployer** des applications conteneurisées sur Azure Container Apps
+
+### 🏗️ Infrastructure Déployée
+- **Dashboard Frontend** (Next.js) + **API Backend** (Node.js)
+- **Base de données** PostgreSQL sur Azure
+- **Registry** Docker privé Azure
+- **Container Apps** pour hébergement scalable
+- **Authentification** JWT + intégration Azure AD
+- **Monitoring** + logs centralisés
+
+---
+
+## ⚡ Déploiement (3 Options)
+
+### 🎯 Option 1: Script Universel (Recommandé)
+```bash
+bash ./deploy-universal.sh
+```
+✅ **Portable partout** (Linux, macOS, Windows, CI/CD)  
+✅ **Isolation complète** dans container Docker  
+✅ **Aucun conflit** avec votre système  
+
+### 🔧 Option 2: Commande Docker Directe
+```bash
+docker build -f Dockerfile.simple -t portail-deploy . && docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/workspace -v portail-azure-credentials:/root/.azure portail-deploy ./deploy-optimized.sh
+```
+✅ **Même résultat** que l'option 1  
+✅ **Contrôle total** de la commande Docker
+
+### 🖥️ Option 3: Déploiement Direct (Machine Locale)
 ```bash
 bash ./deploy-optimized.sh
 ```
+⚠️ **Peut poser des problèmes de compatibilité**  
+⚠️ **Installe des outils** directement sur votre machine  
+✅ **Normalement fonctionne** et installe tout automatiquement
 
-**C'est tout !** Le script configure automatiquement tous les outils et déploie l'infrastructure complète.
+---
+
+## 🔄 Que Font Ces Scripts ?
+
+1. **Installation automatique** : Terraform, Azure CLI, Docker CLI, jq
+2. **Connexion Azure** : Vous demande de vous connecter à votre compte
+3. **Infrastructure Terraform** : Crée toute l'infrastructure Azure
+4. **Build & Push Docker** : Construit et pousse les images sur Azure Registry
+5. **Déploiement Apps** : Déploie dashboard + API sur Container Apps
+6. **Vérifications finales** : CORS, MSI Azure, endpoints API
 
 ## 🛠️ Prérequis
 
 - **Compte Azure** (avec permissions Contributor)
-- **Docker Desktop** installé et démarré
-- **Bash** (Windows/Linux/macOS)
+- **Docker Desktop** (pour options 1 et 2)
 
-> ⚠️ **Aucune configuration manuelle nécessaire** - tout est automatique !
+## 📋 CI/CD Ready
+
+```yaml
+# Compatible tous pipelines : GitHub Actions, GitLab CI, Azure DevOps...
+- run: bash ./deploy-universal.sh
+```
 
 ## 📋 Que fait le script ?
 

@@ -1,0 +1,19 @@
+# Makefile ultra-simple pour déploiement portable
+.PHONY: deploy build clean
+
+# Déploiement en une commande - fonctionne sur toutes les machines avec Docker
+deploy:
+	@echo "🚀 Déploiement portable Portail Cloud"
+	docker build -f Dockerfile.simple -t portail-deploy . 
+	docker run --rm -it \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v $$(pwd):/workspace \
+		portail-deploy
+
+# Build seulement l'image
+build:
+	docker build -f Dockerfile.simple -t portail-deploy .
+
+# Nettoyage
+clean:
+	docker rmi portail-deploy 2>/dev/null || true
